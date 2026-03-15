@@ -57,7 +57,7 @@ class WebSocketClient {
       if (protocols != null) {
         debugPrint('🔌 WebSocket protocols: $protocols');
       }
-      _channel = WebSocketChannel.connect(uri, protocols: protocols);
+      _channel = createChannel(uri, protocols: protocols);
 
       _channelSubscription = _channel!.stream.listen(
         _onMessage,
@@ -177,6 +177,10 @@ class WebSocketClient {
 
     _updateStatus(WebSocketStatus.disconnected);
   }
+
+  @visibleForTesting
+  WebSocketChannel createChannel(Uri uri, {Iterable<String>? protocols}) =>
+      WebSocketChannel.connect(uri, protocols: protocols);
 
   void dispose() {
     _isManualDisconnect = true;
