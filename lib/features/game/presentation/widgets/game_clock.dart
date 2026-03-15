@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/theme.dart';
-import 'package:gchess_mobile/features/game/presentation/bloc/game_bloc.dart';
 import 'package:gchess_mobile/features/game/presentation/bloc/game_state.dart';
+import 'package:gchess_mobile/features/game/presentation/providers/game_provider.dart';
 
 /// Shell statique : avatar + player info + conteneur de l'horloge.
 /// Ne se reconstruit que sur changement de tour ou de nom — jamais sur les ticks.
-/// Le temps lui-même est rendu par [_ClockTimeDisplay] via BlocSelector.
+/// Le temps lui-même est rendu par [_ClockTimeDisplay] via select.
 class GameClock extends StatelessWidget {
   final bool isCurrentTurn;
   final bool isWhite;
@@ -15,7 +15,7 @@ class GameClock extends StatelessWidget {
   final String playerColor;
 
   /// Temps statique optionnel — utilisé uniquement pour la vue de fin de partie
-  /// où il n'y a plus de BlocSelector actif.
+  /// où il n'y a plus de select actif.
   final int? timeRemainingMs;
 
   const GameClock({
@@ -49,7 +49,7 @@ class GameClock extends StatelessWidget {
   }
 
   Widget _buildAvatar() {
-    const double slotSize = 64; // taille fixe du slot — ne change jamais
+    const double slotSize = 64;
     final double avatarSize = isCurrentTurn ? 58 : 50;
     final Color bgColor =
         isWhite ? const Color(0xFF2A3A50) : const Color(0xFF1A2535);
@@ -127,11 +127,11 @@ class GameClock extends StatelessWidget {
 // Seul ce widget se reconstruit à chaque tick d'horloge.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ClockTimeDisplay extends StatelessWidget {
+class _ClockTimeDisplay extends ConsumerWidget {
   final bool isWhite;
   final bool isCurrentTurn;
 
-  /// Fourni uniquement pour la vue fin de partie (pas de BlocSelector).
+  /// Fourni uniquement pour la vue fin de partie (pas de select).
   final int? staticTimeMs;
 
   const _ClockTimeDisplay({
@@ -230,21 +230,22 @@ class _ClockTimeDisplay extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
-    // Fin de partie : temps statique, pas de BlocSelector
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Fin de partie : temps statique, pas de select
     if (staticTimeMs != null) {
       return _buildBox(staticTimeMs!);
     }
 
-    // Partie active : seul ce BlocSelector se reconstruit chaque seconde
-    return BlocSelector<GameBloc, GameState, int?>(
-      selector: (state) => state is GameActive
-          ? (isWhite ? state.whiteTimeRemainingMs : state.blackTimeRemainingMs)
-          : null,
-      builder: (context, timeMs) {
-        if (timeMs == null) return const SizedBox.shrink();
-        return _buildBox(timeMs);
-      },
+    // Partie active : seul ce select se reconstruit chaque seconde
+    final timeMs = ref.watch(
+      gameNotifierProvider.select(
+        (state) => state is GameActive
+            ? (isWhite ? state.whiteTimeRemainingMs : state.blackTimeRemainingMs)
+            : null,
+      ),
     );
+
+    if (timeMs == null) return const SizedBox.shrink();
+    return _buildBox(timeMs);
   }
 }

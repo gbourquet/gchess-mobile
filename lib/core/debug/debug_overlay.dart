@@ -1,14 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/app_config.dart';
-import 'package:gchess_mobile/config/routes.dart';
+import 'package:gchess_mobile/config/router_provider.dart';
 import 'package:gchess_mobile/config/theme.dart';
 import 'package:gchess_mobile/core/injection.dart';
 import 'package:gchess_mobile/core/network/api_client.dart';
-import 'package:gchess_mobile/features/auth/presentation/bloc/auth_bloc.dart';
-import 'package:gchess_mobile/features/auth/presentation/bloc/auth_event.dart';
+import 'package:gchess_mobile/features/auth/presentation/providers/auth_provider.dart';
 
 /// Wraps the app with a two-finger tap detector that opens the debug menu.
 /// Only active in debug builds (kDebugMode).
@@ -43,7 +42,7 @@ class _DebugOverlayState extends State<DebugOverlay> {
   }
 
   void _showDebugMenu() {
-    final navContext = AppRouter.navigatorKey.currentContext;
+    final navContext = appNavigatorKey.currentContext;
     if (navContext == null) {
       _menuShown = false;
       return;
@@ -54,13 +53,14 @@ class _DebugOverlayState extends State<DebugOverlay> {
         onDismiss: _hideDebugMenu,
         onEnvChanged: () {
           _hideDebugMenu();
-          navContext.read<AuthBloc>().add(const LogoutRequested());
+          ProviderScope.containerOf(navContext)
+              .read(authNotifierProvider.notifier)
+              .logout();
         },
       ),
     );
 
-    // Access the overlay directly from the navigator state
-    final overlayState = AppRouter.navigatorKey.currentState?.overlay;
+    final overlayState = appNavigatorKey.currentState?.overlay;
     if (overlayState == null) {
       _menuShown = false;
       return;

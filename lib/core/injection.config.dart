@@ -24,7 +24,6 @@ import '../features/auth/domain/usecases/get_current_user.dart' as _i318;
 import '../features/auth/domain/usecases/login_user.dart' as _i74;
 import '../features/auth/domain/usecases/logout_user.dart' as _i563;
 import '../features/auth/domain/usecases/register_user.dart' as _i789;
-import '../features/auth/presentation/bloc/auth_bloc.dart' as _i59;
 import '../features/game/data/datasources/game_websocket_data_source.dart'
     as _i1043;
 import '../features/game/data/repositories/game_repository_impl.dart' as _i658;
@@ -33,7 +32,6 @@ import '../features/game/domain/usecases/claim_timeout.dart' as _i94;
 import '../features/game/domain/usecases/connect_to_game.dart' as _i418;
 import '../features/game/domain/usecases/disconnect_from_game.dart' as _i875;
 import '../features/game/domain/usecases/send_move.dart' as _i65;
-import '../features/game/presentation/bloc/game_bloc.dart' as _i744;
 import '../features/matchmaking/data/datasources/matchmaking_websocket_data_source.dart'
     as _i630;
 import '../features/matchmaking/data/repositories/matchmaking_repository_impl.dart'
@@ -46,8 +44,6 @@ import '../features/matchmaking/domain/usecases/join_matchmaking_queue.dart'
     as _i979;
 import '../features/matchmaking/domain/usecases/leave_matchmaking_queue.dart'
     as _i866;
-import '../features/matchmaking/presentation/bloc/matchmaking_bloc.dart'
-    as _i461;
 import 'network/api_client.dart' as _i96;
 import 'network/network_info.dart' as _i579;
 import 'storage/preferences_storage.dart' as _i46;
@@ -116,14 +112,6 @@ extension GetItInjectableX on _i174.GetIt {
         networkInfo: gh<_i579.NetworkInfo>(),
       ),
     );
-    gh.factory<_i461.MatchmakingBloc>(
-      () => _i461.MatchmakingBloc(
-        connectToMatchmaking: gh<_i634.ConnectToMatchmaking>(),
-        joinMatchmakingQueue: gh<_i979.JoinMatchmakingQueue>(),
-        leaveMatchmakingQueue: gh<_i866.LeaveMatchmakingQueue>(),
-        repository: gh<_i297.MatchmakingRepository>(),
-      ),
-    );
     gh.factory<_i94.ClaimTimeout>(
       () => _i94.ClaimTimeout(gh<_i897.GameRepository>()),
     );
@@ -145,21 +133,6 @@ extension GetItInjectableX on _i174.GetIt {
     );
     gh.factory<_i789.RegisterUser>(
       () => _i789.RegisterUser(gh<_i869.AuthRepository>()),
-    );
-    gh.factory<_i59.AuthBloc>(
-      () => _i59.AuthBloc(
-        loginUser: gh<_i74.LoginUser>(),
-        registerUser: gh<_i789.RegisterUser>(),
-        logoutUser: gh<_i563.LogoutUser>(),
-        getCurrentUser: gh<_i318.GetCurrentUser>(),
-      ),
-    );
-    gh.factory<_i744.GameBloc>(
-      () => _i744.GameBloc(
-        connectToGame: gh<_i418.ConnectToGame>(),
-        sendMove: gh<_i65.SendMove>(),
-        repository: gh<_i897.GameRepository>(),
-      ),
     );
     return this;
   }

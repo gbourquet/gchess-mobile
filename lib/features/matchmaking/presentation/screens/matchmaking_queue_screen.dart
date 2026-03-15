@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/routes.dart';
 import 'package:gchess_mobile/config/theme.dart';
-import 'package:gchess_mobile/core/injection.dart';
 import 'package:gchess_mobile/features/matchmaking/domain/entities/match_request.dart';
-import 'package:gchess_mobile/features/matchmaking/presentation/bloc/matchmaking_bloc.dart';
-import 'package:gchess_mobile/features/matchmaking/presentation/bloc/matchmaking_event.dart';
 import 'package:gchess_mobile/features/matchmaking/presentation/bloc/matchmaking_state.dart';
+import 'package:gchess_mobile/features/matchmaking/presentation/providers/matchmaking_provider.dart';
 
 class MatchmakingQueueScreen extends StatelessWidget {
   final MatchRequest request;
@@ -17,24 +15,21 @@ class MatchmakingQueueScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) =>
-          getIt<MatchmakingBloc>()..add(const ConnectToMatchmakingEvent()),
-      child: MatchmakingQueueView(request: request),
-    );
+    return MatchmakingQueueView(request: request);
   }
 }
 
-class MatchmakingQueueView extends StatefulWidget {
+class MatchmakingQueueView extends ConsumerStatefulWidget {
   final MatchRequest request;
 
   const MatchmakingQueueView({super.key, required this.request});
 
   @override
-  State<MatchmakingQueueView> createState() => _MatchmakingQueueViewState();
+  ConsumerState<MatchmakingQueueView> createState() =>
+      _MatchmakingQueueViewState();
 }
 
-class _MatchmakingQueueViewState extends State<MatchmakingQueueView> {
+class _MatchmakingQueueViewState extends ConsumerState<MatchmakingQueueView> {
   bool _hasJoinedQueue = false;
 
   String get _timeControlDisplay {
@@ -47,15 +42,55 @@ class _MatchmakingQueueViewState extends State<MatchmakingQueueView> {
     return '$time+$inc';
   }
 
-  void _handleCancel(BuildContext context) {
-    final bloc = context.read<MatchmakingBloc>();
-    bloc.add(const LeaveQueueEvent());
-    bloc.add(const DisconnectFromMatchmakingEvent());
-    context.pop();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(matchmakingNotifierProvider.notifier).connect();
+      }
+    });
+  }
+
+  void _handleCancel() {
+    context.pop(); // ref.onDispose gère la déconnexion
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(matchmakingNotifierProvider, (previous, next) {
+      if (next is MatchmakingIdle && !_hasJoinedQueue) {
+        _hasJoinedQueue = true;
+        ref
+            .read(matchmakingNotifierProvider.notifier)
+            .joinQueue(widget.request);
+      } else if (next is MatchFound) {
+        context.go(
+          AppRoutes.gameWithId(
+            next.matchResult.gameId,
+            next.matchResult.playerId,
+          ),
+        );
+      } else if (next is MatchmakingError) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.message),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Réessayer',
+              textColor: Colors.white,
+              onPressed: () {
+                _hasJoinedQueue = false;
+                ref.read(matchmakingNotifierProvider.notifier).connect();
+              },
+            ),
+          ),
+        );
+      }
+    });
+
+    final state = ref.watch(matchmakingNotifierProvider);
+
     return Scaffold(
       backgroundColor: AppColors.bgDeep,
       body: Stack(
@@ -72,98 +107,63 @@ class _MatchmakingQueueViewState extends State<MatchmakingQueueView> {
             ),
           ),
           SafeArea(
-            child: BlocConsumer<MatchmakingBloc, MatchmakingState>(
-              listener: (context, state) {
-                if (state is MatchmakingIdle && !_hasJoinedQueue) {
-                  _hasJoinedQueue = true;
-                  context
-                      .read<MatchmakingBloc>()
-                      .add(JoinQueueEvent(widget.request));
-                } else if (state is MatchFound) {
-                  context.go(
-                    AppRoutes.gameWithId(
-                      state.matchResult.gameId,
-                      state.matchResult.playerId,
-                    ),
-                  );
-                } else if (state is MatchmakingError) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message),
-                      backgroundColor: Colors.red,
-                      action: SnackBarAction(
-                        label: 'Réessayer',
-                        textColor: Colors.white,
-                        onPressed: () {
-                          context.read<MatchmakingBloc>().add(
-                            const ConnectToMatchmakingEvent(),
-                          );
-                        },
+            child: Column(
+              children: [
+                // Header
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back_ios_new,
+                            color: AppColors.labelMuted),
+                        onPressed: _handleCancel,
                       ),
-                    ),
-                  );
-                }
-              },
-              builder: (context, state) {
-                return Column(
-                  children: [
-                    // Header
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_ios_new,
-                                color: AppColors.labelMuted),
-                            onPressed: () => _handleCancel(context),
-                          ),
-                          Expanded(
-                            child: Center(
-                              child: Text(
-                                'Recherche $_timeControlDisplay',
-                                style: GoogleFonts.fredoka(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.labelWhite,
-                                ),
-                              ),
+                      Expanded(
+                        child: Center(
+                          child: Text(
+                            'Recherche $_timeControlDisplay',
+                            style: GoogleFonts.fredoka(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.labelWhite,
                             ),
                           ),
-                          const SizedBox(width: 48),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            if (state is MatchmakingConnecting)
-                              _buildConnectingView()
-                            else if (state is InQueue)
-                              _buildQueueView(state.position)
-                            else if (state is MatchmakingError)
-                              _buildErrorView(context, state.message)
-                            else
-                              _buildConnectingView(),
-                            const SizedBox(height: 48),
-                            OutlinedButton.icon(
-                              onPressed: () => _handleCancel(context),
-                              icon: const Icon(Icons.close),
-                              label: const Text('Annuler'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red,
-                                side: const BorderSide(color: Colors.red),
-                              ),
-                            ),
-                          ],
                         ),
                       ),
+                      const SizedBox(width: 48),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (state is MatchmakingConnecting)
+                          _buildConnectingView()
+                        else if (state is InQueue)
+                          _buildQueueView(state.position)
+                        else if (state is MatchmakingError)
+                          _buildErrorView(state.message)
+                        else
+                          _buildConnectingView(),
+                        const SizedBox(height: 48),
+                        OutlinedButton.icon(
+                          onPressed: _handleCancel,
+                          icon: const Icon(Icons.close),
+                          label: const Text('Annuler'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -310,7 +310,7 @@ class _MatchmakingQueueViewState extends State<MatchmakingQueueView> {
     );
   }
 
-  Widget _buildErrorView(BuildContext context, String message) {
+  Widget _buildErrorView(String message) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
