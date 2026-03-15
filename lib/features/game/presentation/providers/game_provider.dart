@@ -17,12 +17,14 @@ final gameNotifierProvider =
 
 class GameNotifier extends Notifier<GameState> {
   StreamSubscription? _sub;
+  late GameRepository _repo;
 
   @override
   GameState build() {
+    _repo = getIt<GameRepository>();
     ref.onDispose(() {
       _sub?.cancel();
-      getIt<GameRepository>().disconnect(); // fire-and-forget
+      _repo.disconnect(); // fire-and-forget
     });
     return const GameInitial();
   }
@@ -34,7 +36,7 @@ class GameNotifier extends Notifier<GameState> {
       (f) => state = GameError(f.message),
       (_) {
         _sub?.cancel();
-        _sub = getIt<GameRepository>().eventStream.listen((streamEvent) {
+        _sub = _repo.eventStream.listen((streamEvent) {
           // Les 9 événements internes disparaissent — assignations directes
           if (streamEvent is GameStateSyncEvent) {
             _onGameStateSync(streamEvent.game);
@@ -66,12 +68,12 @@ class GameNotifier extends Notifier<GameState> {
   }
 
   Future<void> resign() async {
-    final result = await getIt<GameRepository>().resign();
+    final result = await _repo.resign();
     result.fold((f) => state = GameError(f.message), (_) {});
   }
 
   Future<void> offerDraw() async {
-    final result = await getIt<GameRepository>().offerDraw();
+    final result = await _repo.offerDraw();
     result.fold((f) => state = GameError(f.message), (_) {
       if (state is GameActive) {
         state = (state as GameActive).copyWith(hasOfferedDraw: true);
@@ -80,12 +82,12 @@ class GameNotifier extends Notifier<GameState> {
   }
 
   Future<void> acceptDraw() async {
-    final result = await getIt<GameRepository>().acceptDraw();
+    final result = await _repo.acceptDraw();
     result.fold((f) => state = GameError(f.message), (_) {});
   }
 
   Future<void> rejectDraw() async {
-    final result = await getIt<GameRepository>().rejectDraw();
+    final result = await _repo.rejectDraw();
     result.fold((f) => state = GameError(f.message), (_) {
       if (state is GameActive) {
         state = (state as GameActive).copyWith(clearPendingDraw: true);
@@ -100,7 +102,7 @@ class GameNotifier extends Notifier<GameState> {
     if (isWhite && currentState.whiteTimeRemainingMs != null) {
       final newTime = currentState.whiteTimeRemainingMs! - 1000;
       if (newTime <= 0) {
-        getIt<GameRepository>().claimTimeout();
+        _repo.claimTimeout();
         state = currentState.copyWith(whiteTimeRemainingMs: 0);
       } else {
         state = currentState.copyWith(whiteTimeRemainingMs: newTime);
@@ -108,7 +110,7 @@ class GameNotifier extends Notifier<GameState> {
     } else if (!isWhite && currentState.blackTimeRemainingMs != null) {
       final newTime = currentState.blackTimeRemainingMs! - 1000;
       if (newTime <= 0) {
-        getIt<GameRepository>().claimTimeout();
+        _repo.claimTimeout();
         state = currentState.copyWith(blackTimeRemainingMs: 0);
       } else {
         state = currentState.copyWith(blackTimeRemainingMs: newTime);
@@ -136,7 +138,7 @@ class GameNotifier extends Notifier<GameState> {
           : chessGame.whiteTimeRemainingMs;
 
       if (opponentTimeMs != null && opponentTimeMs <= 0) {
-        getIt<GameRepository>().claimTimeout();
+        _repo.claimTimeout();
       }
 
       state = GameActive(
@@ -163,7 +165,7 @@ class GameNotifier extends Notifier<GameState> {
         : event.whiteTimeRemainingMs;
 
     if (opponentTimeMs != null && opponentTimeMs <= 0) {
-      getIt<GameRepository>().claimTimeout();
+      _repo.claimTimeout();
     }
 
     final updatedGame = ChessGame(
@@ -307,7 +309,7 @@ class GameNotifier extends Notifier<GameState> {
     }
 
     if (event.remainingMs <= 0) {
-      getIt<GameRepository>().claimTimeout();
+      _repo.claimTimeout();
     }
   }
 }

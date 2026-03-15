@@ -19,10 +19,12 @@ class MatchmakingNotifier extends Notifier<MatchmakingState> {
 
   @override
   MatchmakingState build() {
+    final leaveQueue = getIt<LeaveMatchmakingQueue>();
+    final repo = getIt<MatchmakingRepository>();
     ref.onDispose(() {
       _sub?.cancel();
-      getIt<LeaveMatchmakingQueue>()().then((_) {}); // fire-and-forget
-      getIt<MatchmakingRepository>().disconnect(); // fire-and-forget
+      leaveQueue().then((_) {}); // fire-and-forget
+      repo.disconnect(); // fire-and-forget
     });
     return const MatchmakingIdle();
   }

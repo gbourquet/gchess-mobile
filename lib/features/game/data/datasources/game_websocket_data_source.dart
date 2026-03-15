@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:injectable/injectable.dart';
 import 'package:gchess_mobile/config/app_config.dart';
 import 'package:gchess_mobile/core/error/exceptions.dart';
@@ -48,10 +49,7 @@ class GameWebSocketDataSourceImpl implements GameWebSocketDataSource {
 
       final wsUri = Uri.parse('${AppConfig.websocketUrl}/ws/game/$gameId')
           .replace(queryParameters: {'token': token});
-      _client = WebSocketClient(
-        url: wsUri.toString(),
-        protocols: ['Bearer $token'],
-      );
+      _client = createClient(wsUri.toString(), ['Bearer $token']);
 
       _messageSubscription = _client!.messages.listen(
         _handleMessage,
@@ -278,6 +276,10 @@ class GameWebSocketDataSourceImpl implements GameWebSocketDataSource {
     _client = null;
     _messageSubscription = null;
   }
+
+  @visibleForTesting
+  WebSocketClient createClient(String url, List<String> protocols) =>
+      WebSocketClient(url: url, protocols: protocols);
 
   void dispose() {
     _messageSubscription?.cancel();
