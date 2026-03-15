@@ -1,15 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:chess/chess.dart' as chess_lib;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/theme.dart';
-import 'package:gchess_mobile/core/injection.dart';
 import 'package:gchess_mobile/features/game/domain/entities/chess_move.dart';
-import 'package:gchess_mobile/features/game/presentation/bloc/game_bloc.dart';
-import 'package:gchess_mobile/features/game/presentation/bloc/game_event.dart';
 import 'package:gchess_mobile/features/game/presentation/bloc/game_state.dart';
+import 'package:gchess_mobile/features/game/presentation/providers/game_provider.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/chess_board.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/game_clock.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/move_history_panel.dart';
@@ -22,10 +20,7 @@ class GameScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => getIt<GameBloc>()..add(ConnectToGameEvent(gameId)),
-      child: GameView(playerId: playerId),
-    );
+    return GameView(gameId: gameId, playerId: playerId);
   }
 }
 
@@ -126,19 +121,20 @@ class _RoomBackgroundPainter extends CustomPainter {
 // GameView
 // ─────────────────────────────────────────────────────────────────────────────
 
-class GameView extends StatefulWidget {
+class GameView extends ConsumerStatefulWidget {
+  final String gameId;
   final String playerId;
 
-  const GameView({super.key, required this.playerId});
+  const GameView({super.key, required this.gameId, required this.playerId});
 
   @override
-  State<GameView> createState() => _GameViewState();
+  ConsumerState<GameView> createState() => _GameViewState();
 }
 
-class _GameViewState extends State<GameView> with WidgetsBindingObserver {
+class _GameViewState extends ConsumerState<GameView>
+    with WidgetsBindingObserver {
   final chess_lib.Chess _chess = chess_lib.Chess();
   String? _lastShownDrawOfferId;
-  GameBloc? _gameBloc;
   Timer? _clockTimer;
   DateTime? _backgroundedAt;
 
@@ -151,23 +147,23 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
   bool get _isReviewing => _reviewIndex >= 0;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _gameBloc ??= context.read<GameBloc>();
-  }
-
-  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startClockTimer();
+    // Connexion après le premier frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(gameNotifierProvider.notifier).connect(widget.gameId);
+      }
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer?.cancel();
-    _gameBloc?.add(const DisconnectFromGameEvent());
+    // La déconnexion WebSocket est gérée par ref.onDispose dans GameNotifier
     super.dispose();
   }
 
@@ -187,12 +183,12 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
   }
 
   void _onAppResumed() {
-    if (_backgroundedAt == null || _gameBloc == null) return;
+    if (_backgroundedAt == null) return;
     final elapsed = DateTime.now().difference(_backgroundedAt!).inSeconds;
     _backgroundedAt = null;
     if (elapsed <= 0) return;
 
-    final currentState = _gameBloc!.state;
+    final currentState = ref.read(gameNotifierProvider);
     if (currentState is! GameActive) return;
     if (_isReviewing) return;
 
@@ -202,31 +198,30 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
     if (!clockStarted) return;
 
     for (int i = 0; i < elapsed; i++) {
-      _gameBloc!.add(UpdateClockTimeEvent(isWhite: isWhiteTurn));
+      ref.read(gameNotifierProvider.notifier).tickClock(isWhiteTurn);
     }
   }
 
   void _startClockTimer() {
     _clockTimer?.cancel();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted && _gameBloc != null) {
-        final state = _gameBloc!.state;
-        if (state is GameActive && !_isReviewing) {
-          final isWhiteTurn = state.game.currentSide == 'WHITE';
+      if (!mounted) return;
+      final state = ref.read(gameNotifierProvider);
+      if (state is GameActive && !_isReviewing) {
+        final isWhiteTurn = state.game.currentSide == 'WHITE';
 
-          if (state.whiteTimeRemainingMs != null &&
-              state.blackTimeRemainingMs != null) {
-            final time = isWhiteTurn
-                ? state.whiteTimeRemainingMs!
-                : state.blackTimeRemainingMs!;
+        if (state.whiteTimeRemainingMs != null &&
+            state.blackTimeRemainingMs != null) {
+          final time = isWhiteTurn
+              ? state.whiteTimeRemainingMs!
+              : state.blackTimeRemainingMs!;
 
-            final moveCount = state.game.moveHistory.length;
-            final clockStarted =
-                isWhiteTurn ? moveCount >= 1 : moveCount >= 2;
+          final moveCount = state.game.moveHistory.length;
+          final clockStarted =
+              isWhiteTurn ? moveCount >= 1 : moveCount >= 2;
 
-            if (time > 0 && clockStarted) {
-              _gameBloc!.add(UpdateClockTimeEvent(isWhite: isWhiteTurn));
-            }
+          if (time > 0 && clockStarted) {
+            ref.read(gameNotifierProvider.notifier).tickClock(isWhiteTurn);
           }
         }
       }
@@ -304,7 +299,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
 
   void _navigateLast() => _returnToLive();
 
-  void _tryFirePreMove(BuildContext context, GameActive state) {
+  void _tryFirePreMove(GameActive state) {
     if (_preMove == null) return;
     final isPlayerWhite =
         state.game.whitePlayer.playerId == widget.playerId;
@@ -314,7 +309,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
     final preMove = _preMove!;
     setState(() => _preMove = null);
 
-    // Validate legality in the new position
+    // Valider la légalité dans la nouvelle position
     final chess = chess_lib.Chess();
     chess.load(state.game.positionFen);
     final moves = chess.moves({'square': preMove.from, 'verbose': true});
@@ -322,224 +317,209 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
       (m) => m is Map && m['to'] == preMove.to,
     );
     if (isLegal) {
-      context.read<GameBloc>().add(MakeMoveEvent(preMove));
+      ref.read(gameNotifierProvider.notifier).makeMove(preMove);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Écoute pour les side effects (dialogs, snackbars, historique)
+    ref.listen(gameNotifierProvider, (previous, current) {
+      // Ignorer si seulement les horloges ont changé
+      if (previous is GameActive &&
+          current is GameActive &&
+          previous.game == current.game) {
+        return;
+      }
+
+      if (current is GameActive) {
+        _updateHistory(current.game.moveHistory);
+        _tryFirePreMove(current);
+      }
+      if (current is GameEnded) {
+        setState(() => _preMove = null);
+      }
+      if (current is GameError) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(current.message),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    });
+
+    final state = ref.watch(gameNotifierProvider);
+
     return Scaffold(
       backgroundColor: AppColors.bgDeep,
       body: Stack(
         children: [
-          // Background room painting
           Positioned.fill(
             child: CustomPaint(painter: _RoomBackgroundPainter()),
           ),
-          // Content
           SafeArea(
-            child: BlocConsumer<GameBloc, GameState>(
-              listenWhen: (prev, curr) {
-                if (prev.runtimeType != curr.runtimeType) return true;
-                if (curr is GameError) return true;
-                if (curr is! GameActive || prev is! GameActive) return true;
-                return prev.game != curr.game;
-              },
-              listener: (context, state) {
-                if (state is GameActive) {
-                  _updateHistory(state.game.moveHistory);
-                  _tryFirePreMove(context, state);
-                }
-                if (state is GameEnded) {
-                  setState(() => _preMove = null);
-                }
-                if (state is GameError) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              },
-              buildWhen: (prev, curr) {
-                if (prev.runtimeType != curr.runtimeType) return true;
-                if (curr is! GameActive || prev is! GameActive) return true;
-                // Skip rebuilds when only clock times changed
-                return prev.game != curr.game ||
-                    prev.lastMoveFrom != curr.lastMoveFrom ||
-                    prev.lastMoveTo != curr.lastMoveTo ||
-                    prev.pendingDrawOfferId != curr.pendingDrawOfferId ||
-                    prev.hasOfferedDraw != curr.hasOfferedDraw;
-              },
-              builder: (context, state) {
-                if (state is GameLoading) {
-                  return const Center(
-                    child: CircularProgressIndicator(
-                      color: AppColors.neonCyan,
-                    ),
-                  );
-                } else if (state is GameEnded) {
-                  _chess.load(state.game.positionFen);
-                  final isPlayerWhite =
-                      state.game.whitePlayer.playerId == widget.playerId;
-                  return _buildGameEndedView(context, state, isPlayerWhite);
-                } else if (state is GameActive) {
-                  final isPlayerWhite =
-                      state.game.whitePlayer.playerId == widget.playerId;
-
-                  final String fenToDisplay =
-                      _isReviewing && _fenHistory.isNotEmpty
-                          ? _fenHistory[_reviewIndex]
-                          : state.game.positionFen;
-                  _chess.load(fenToDisplay);
-
-                  String? displayLastFrom;
-                  String? displayLastTo;
-                  if (_isReviewing &&
-                      _reviewIndex >= 0 &&
-                      _reviewIndex < _uciHistory.length) {
-                    final parts = _uciHistory[_reviewIndex].split('-');
-                    if (parts.length >= 2) {
-                      displayLastFrom = parts[0];
-                      displayLastTo = parts[1];
-                    }
-                  } else {
-                    displayLastFrom = state.lastMoveFrom;
-                    displayLastTo = state.lastMoveTo;
-                  }
-
-                  if (!_isReviewing) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (state.pendingDrawOfferId != null &&
-                          _lastShownDrawOfferId != state.pendingDrawOfferId) {
-                        _lastShownDrawOfferId = state.pendingDrawOfferId;
-                        _showDrawOfferDialog(
-                            context, state.pendingDrawOfferId!);
-                      } else if (state.pendingDrawOfferId == null) {
-                        _lastShownDrawOfferId = null;
-                      }
-                    });
-                  }
-
-                  final isWhiteTurn = state.game.currentSide == 'WHITE';
-
-                  return Column(
-                    children: [
-                      _buildHeader(),
-                      _IsolatedGameClock(
-                        isWhite: !isPlayerWhite,
-                        isPlayerWhite: isPlayerWhite,
-                        isReviewing: _isReviewing,
-                      ),
-                      Expanded(
-                        child: Stack(
-                          children: [
-                            Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                child: ChessBoard(
-                                  chess: _chess,
-                                  positionFen: fenToDisplay,
-                                  isPlayerWhite: isPlayerWhite,
-                                  onMove: _isReviewing
-                                      ? null
-                                      : (from, to, promotion) {
-                                          context.read<GameBloc>().add(
-                                            MakeMoveEvent(
-                                              ChessMove(
-                                                from: from,
-                                                to: to,
-                                                promotion: promotion,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                  onPreMove: _isReviewing
-                                      ? null
-                                      : (from, to, promotion) {
-                                          setState(() {
-                                            _preMove = ChessMove(
-                                              from: from,
-                                              to: to,
-                                              promotion: promotion,
-                                            );
-                                          });
-                                        },
-                                  lastMoveFrom: displayLastFrom,
-                                  lastMoveTo: displayLastTo,
-                                ),
-                              ),
-                            ),
-                            if (_isReviewing)
-                              Positioned(
-                                top: 8,
-                                left: 0,
-                                right: 0,
-                                child: Center(
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.bgDeep
-                                          .withValues(alpha: 0.85),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: AppColors.neonCyan
-                                            .withValues(alpha: 0.4),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.history,
-                                            color: AppColors.neonCyan,
-                                            size: 12),
-                                        const SizedBox(width: 5),
-                                        Text(
-                                          'Historique',
-                                          style: GoogleFonts.fredoka(
-                                            color: AppColors.neonCyan,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      _IsolatedGameClock(
-                        isWhite: isPlayerWhite,
-                        isPlayerWhite: isPlayerWhite,
-                        isReviewing: _isReviewing,
-                      ),
-                      MoveHistoryPanel(
-                        sanHistory: _sanHistory,
-                        reviewIndex: _reviewIndex,
-                        onMoveSelected: _navigateTo,
-                        onFirst: _navigateFirst,
-                        onPrevious: _navigatePrevious,
-                        onNext: _navigateNext,
-                        onLast: _navigateLast,
-                        onReturnToLive: _returnToLive,
-                      ),
-                      _buildActionBar(context, state),
-                    ],
-                  );
-                }
-
-                return const Center(
-                  child: CircularProgressIndicator(color: AppColors.neonCyan),
-                );
-              },
-            ),
+            child: _buildContent(context, state),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, GameState state) {
+    if (state is GameLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppColors.neonCyan),
+      );
+    } else if (state is GameEnded) {
+      _chess.load(state.game.positionFen);
+      final isPlayerWhite =
+          state.game.whitePlayer.playerId == widget.playerId;
+      return _buildGameEndedView(context, state, isPlayerWhite);
+    } else if (state is GameActive) {
+      final isPlayerWhite =
+          state.game.whitePlayer.playerId == widget.playerId;
+
+      final String fenToDisplay =
+          _isReviewing && _fenHistory.isNotEmpty
+              ? _fenHistory[_reviewIndex]
+              : state.game.positionFen;
+      _chess.load(fenToDisplay);
+
+      String? displayLastFrom;
+      String? displayLastTo;
+      if (_isReviewing &&
+          _reviewIndex >= 0 &&
+          _reviewIndex < _uciHistory.length) {
+        final parts = _uciHistory[_reviewIndex].split('-');
+        if (parts.length >= 2) {
+          displayLastFrom = parts[0];
+          displayLastTo = parts[1];
+        }
+      } else {
+        displayLastFrom = state.lastMoveFrom;
+        displayLastTo = state.lastMoveTo;
+      }
+
+      if (!_isReviewing) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (state.pendingDrawOfferId != null &&
+              _lastShownDrawOfferId != state.pendingDrawOfferId) {
+            _lastShownDrawOfferId = state.pendingDrawOfferId;
+            _showDrawOfferDialog(context, state.pendingDrawOfferId!);
+          } else if (state.pendingDrawOfferId == null) {
+            _lastShownDrawOfferId = null;
+          }
+        });
+      }
+
+      return Column(
+        children: [
+          _buildHeader(),
+          _IsolatedGameClock(
+            isWhite: !isPlayerWhite,
+            isPlayerWhite: isPlayerWhite,
+            isReviewing: _isReviewing,
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    child: ChessBoard(
+                      chess: _chess,
+                      positionFen: fenToDisplay,
+                      isPlayerWhite: isPlayerWhite,
+                      onMove: _isReviewing
+                          ? null
+                          : (from, to, promotion) {
+                              ref
+                                  .read(gameNotifierProvider.notifier)
+                                  .makeMove(
+                                    ChessMove(
+                                      from: from,
+                                      to: to,
+                                      promotion: promotion,
+                                    ),
+                                  );
+                            },
+                      onPreMove: _isReviewing
+                          ? null
+                          : (from, to, promotion) {
+                              setState(() {
+                                _preMove = ChessMove(
+                                  from: from,
+                                  to: to,
+                                  promotion: promotion,
+                                );
+                              });
+                            },
+                      lastMoveFrom: displayLastFrom,
+                      lastMoveTo: displayLastTo,
+                    ),
+                  ),
+                ),
+                if (_isReviewing)
+                  Positioned(
+                    top: 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppColors.bgDeep.withValues(alpha: 0.85),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: AppColors.neonCyan.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.history,
+                                color: AppColors.neonCyan, size: 12),
+                            const SizedBox(width: 5),
+                            Text(
+                              'Historique',
+                              style: GoogleFonts.fredoka(
+                                color: AppColors.neonCyan,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          _IsolatedGameClock(
+            isWhite: isPlayerWhite,
+            isPlayerWhite: isPlayerWhite,
+            isReviewing: _isReviewing,
+          ),
+          MoveHistoryPanel(
+            sanHistory: _sanHistory,
+            reviewIndex: _reviewIndex,
+            onMoveSelected: _navigateTo,
+            onFirst: _navigateFirst,
+            onPrevious: _navigatePrevious,
+            onNext: _navigateNext,
+            onLast: _navigateLast,
+            onReturnToLive: _returnToLive,
+          ),
+          _buildActionBar(context, state),
+        ],
+      );
+    }
+
+    return const Center(
+      child: CircularProgressIndicator(color: AppColors.neonCyan),
     );
   }
 
@@ -559,7 +539,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
               child: _GameTitle(),
             ),
           ),
-          const SizedBox(width: 44), // balance menu button
+          const SizedBox(width: 44),
         ],
       ),
     );
@@ -679,7 +659,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
             TextButton(
               onPressed: () {
                 Navigator.of(dialogCtx).pop();
-                context.read<GameBloc>().add(const ResignGameEvent());
+                ref.read(gameNotifierProvider.notifier).resign();
               },
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('Abandonner'),
@@ -696,7 +676,8 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
       builder: (BuildContext dialogCtx) {
         return AlertDialog(
           title: const Text('Proposer nulle'),
-          content: const Text('Voulez-vous proposer la nulle à votre adversaire ?'),
+          content: const Text(
+              'Voulez-vous proposer la nulle à votre adversaire ?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogCtx).pop(),
@@ -705,7 +686,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
             TextButton(
               onPressed: () {
                 Navigator.of(dialogCtx).pop();
-                context.read<GameBloc>().add(const OfferDrawEvent());
+                ref.read(gameNotifierProvider.notifier).offerDraw();
               },
               child: const Text('Proposer'),
             ),
@@ -734,7 +715,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
             TextButton(
               onPressed: () {
                 Navigator.of(dialogCtx).pop();
-                context.read<GameBloc>().add(const RejectDrawEvent());
+                ref.read(gameNotifierProvider.notifier).rejectDraw();
               },
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('Refuser'),
@@ -742,7 +723,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(dialogCtx).pop();
-                context.read<GameBloc>().add(const AcceptDrawEvent());
+                ref.read(gameNotifierProvider.notifier).acceptDraw();
               },
               child: const Text('Accepter'),
             ),
@@ -805,8 +786,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
           child: Column(
             children: [
               _buildHeader(),
-              _buildGameClockEnded(
-                  context, state.game, !isPlayerWhite, isPlayerWhite),
+              _buildGameClockEnded(state.game, !isPlayerWhite),
               Expanded(
                 child: Stack(
                   children: [
@@ -877,8 +857,7 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              _buildGameClockEnded(
-                  context, state.game, isPlayerWhite, isPlayerWhite),
+              _buildGameClockEnded(state.game, isPlayerWhite),
             ],
           ),
         ),
@@ -886,14 +865,10 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildGameClockEnded(
-    BuildContext context,
-    dynamic game,
-    bool isWhite,
-    bool isPlayerWhite,
-  ) {
+  Widget _buildGameClockEnded(dynamic game, bool isWhite) {
     final player = isWhite ? game.whitePlayer : game.blackPlayer;
-    final timeMs = isWhite ? game.whiteTimeRemainingMs : game.blackTimeRemainingMs;
+    final timeMs =
+        isWhite ? game.whiteTimeRemainingMs : game.blackTimeRemainingMs;
 
     return GameClock(
       timeRemainingMs: timeMs,
@@ -914,9 +889,6 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
         : 'Vous avez perdu par échec et mat.';
   }
 
-  String _getResignationDescription(dynamic game, String playerId) =>
-      'Un joueur a abandonné.';
-
   String _getTimeoutDescription(dynamic game, String playerId) {
     final currentSide = game.currentSide;
     final playerWon =
@@ -929,14 +901,10 @@ class _GameViewState extends State<GameView> with WidgetsBindingObserver {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reusable UI components
+// Isolated clock widget — se reconstruit uniquement sur changement de tour
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Isolated clock widget — rebuilds only when its own time or the turn changes
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _IsolatedGameClock extends StatelessWidget {
+class _IsolatedGameClock extends ConsumerWidget {
   final bool isWhite;
   final bool isPlayerWhite;
   final bool isReviewing;
@@ -948,34 +916,59 @@ class _IsolatedGameClock extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    // Ne se reconstruit que sur changement de tour ou de nom de joueur.
-    // Le temps est géré en interne par _ClockTimeDisplay via BlocSelector.
-    return BlocBuilder<GameBloc, GameState>(
-      buildWhen: (prev, curr) {
-        if (prev.runtimeType != curr.runtimeType) return true;
-        if (curr is! GameActive || prev is! GameActive) return true;
-        return prev.game.currentSide != curr.game.currentSide ||
-            prev.game.whitePlayer.username != curr.game.whitePlayer.username ||
-            prev.game.blackPlayer.username != curr.game.blackPlayer.username;
-      },
-      builder: (context, state) {
-        if (state is! GameActive) return const SizedBox.shrink();
-        final player =
-            isWhite ? state.game.whitePlayer : state.game.blackPlayer;
-        final isWhiteTurn = state.game.currentSide == 'WHITE';
-        final isCurrentTurn = (isWhite == isWhiteTurn) && !isReviewing;
-        return GameClock(
-          isCurrentTurn: isCurrentTurn,
-          isWhite: isWhite,
-          playerName: player.username,
-          playerColor: isWhite ? 'White' : 'Black',
-          // Pas de timeRemainingMs : _ClockTimeDisplay utilise BlocSelector
-        );
-      },
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Ne se reconstruit que sur changement de tour ou de nom de joueur
+    final data = ref.watch(gameNotifierProvider.select((state) {
+      if (state is! GameActive) return null;
+      return _ClockShellData(
+        currentSide: state.game.currentSide,
+        whiteUsername: state.game.whitePlayer.username,
+        blackUsername: state.game.blackPlayer.username,
+      );
+    }));
+
+    if (data == null) return const SizedBox.shrink();
+
+    final playerName =
+        isWhite ? data.whiteUsername : data.blackUsername;
+    final isWhiteTurn = data.currentSide == 'WHITE';
+    final isCurrentTurn = (isWhite == isWhiteTurn) && !isReviewing;
+
+    return GameClock(
+      isCurrentTurn: isCurrentTurn,
+      isWhite: isWhite,
+      playerName: playerName,
+      playerColor: isWhite ? 'White' : 'Black',
     );
   }
 }
+
+class _ClockShellData {
+  final String currentSide;
+  final String whiteUsername;
+  final String blackUsername;
+
+  const _ClockShellData({
+    required this.currentSide,
+    required this.whiteUsername,
+    required this.blackUsername,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ClockShellData &&
+      currentSide == other.currentSide &&
+      whiteUsername == other.whiteUsername &&
+      blackUsername == other.blackUsername;
+
+  @override
+  int get hashCode =>
+      Object.hash(currentSide, whiteUsername, blackUsername);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reusable UI components
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _GameTitle extends StatelessWidget {
   @override

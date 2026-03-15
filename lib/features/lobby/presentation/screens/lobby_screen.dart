@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/routes.dart';
 import 'package:gchess_mobile/config/theme.dart';
-import 'package:gchess_mobile/features/auth/presentation/bloc/auth_bloc.dart';
-import 'package:gchess_mobile/features/auth/presentation/bloc/auth_event.dart';
+import 'package:gchess_mobile/features/auth/presentation/providers/auth_provider.dart';
 import 'package:gchess_mobile/features/lobby/presentation/widgets/custom_game_dialog.dart';
 import 'package:gchess_mobile/features/lobby/presentation/widgets/time_control_preset_button.dart';
 import 'package:gchess_mobile/features/matchmaking/domain/entities/match_request.dart';
 
-class LobbyScreen extends StatelessWidget {
+class LobbyScreen extends ConsumerWidget {
   const LobbyScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: AppColors.bgDeep,
       body: Stack(
@@ -34,7 +33,7 @@ class LobbyScreen extends StatelessWidget {
           SafeArea(
             child: Column(
               children: [
-                _buildHeader(context),
+                _buildHeader(context, ref),
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.symmetric(
@@ -73,7 +72,7 @@ class LobbyScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, WidgetRef ref) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -111,7 +110,7 @@ class LobbyScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.logout, color: AppColors.labelMuted),
             onPressed: () {
-              context.read<AuthBloc>().add(const LogoutRequested());
+              ref.read(authNotifierProvider.notifier).logout();
             },
           ),
         ],
