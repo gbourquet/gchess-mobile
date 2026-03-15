@@ -1,0 +1,641 @@
+asyncapi: 3.0.0
+
+info:
+  title: gChess WebSocket API
+  version: 2.0.0
+  description: |
+    Real-time WebSocket API for gChess chess application.
+
+    Provides real-time communication for:
+    - Matchmaking (instant match notifications for human vs human and human vs bot)
+    - Gameplay (move execution, game state sync, automatic bot moves)
+    - Spectators (observe games in real-time)
+
+    **Bot Integration**: Bots are integrated into the unified matchmaking flow.
+    Human vs bot games use the same WebSocket endpoint with a `bot: true` parameter.
+    Bots automatically calculate and execute moves after each human move.
+
+    **Authentication**: All WebSocket connections require JWT authentication.
+    The JWT token must be provided either as a query parameter (?token=...)
+    or in the Sec-WebSocket-Protocol header.
+
+    **Architecture**:
+    - Matchmaking: Indexed by UserId (permanent user identity), unified for humans and bots
+    - Gameplay: Indexed by PlayerId (per-game participation)
+    - Spectators: Indexed by UserId (observers, not participants)
+    - Authentication: Managed by WebSocketJwtAuth (shared kernel) across all contexts
+    - Bot moves: Automatically triggered after human moves via ExecuteBotMoveUseCase
+
+  contact:
+    name: Guillaume Bourquet
+    email: gbourquet@gmail.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  development:
+    host: localhost:8080
+    protocol: ws
+    description: Development server (WebSocket)
+  production:
+    host: gchess.example.com
+    protocol: wss
+    description: Production server (WebSocket Secure)
+
+channels:
+  matchmaking:
+    address: /ws/matchmaking
+    description: |
+      WebSocket channel for unified matchmaking (human vs human and human vs bot).
+
+      **Human vs Human**: Users join the FIFO queue and receive notifications when matched with another human.
+      **Human vs Bot**: Users specify `bot: true` parameter for instant matching with a bot opponent.
+
+      **Bot Configuration**:
+      - `bot: true` - Request to play against a bot (immediate match)
+      - `botId` (optional) - Specific bot ID, or random if not specified
+      - `playerColor` (optional) - Desired color (WHITE/BLACK), or random if not specified
+
+      **Authentication**: JWT required
+      **Connection scope**: One connection per UserId
+    messages:
+      AuthSuccess:
+        $ref: '#/components/messages/AuthSuccess'
+      AuthFailed:
+        $ref: '#/components/messages/AuthFailed'
+      JoinQueue:
+        $ref: '#/components/messages/JoinQueue'
+      QueuePositionUpdate:
+        $ref: '#/components/messages/QueuePositionUpdate'
+      MatchFound:
+        $ref: '#/components/messages/MatchFound'
+      MatchmakingError:
+        $ref: '#/components/messages/MatchmakingError'
+      Error:
+        $ref: '#/components/messages/Error'
+
+  game:
+    address: /ws/game/{gameId}
+    description: |
+      WebSocket channel for participating in a game.
+      Players send moves and receive game state updates in real-time.
+
+      **Bot Gameplay**: If the opponent is a bot (username starts with "bot_"),
+      the bot will automatically calculate and execute its move immediately after
+      the human player's move. Bot moves are sent via MoveExecuted messages.
+
+      **Authentication**: JWT required
+      **Connection scope**: One connection per PlayerId (participation)
+      **Multi-device**: A user can have multiple connections (different games)
+    parameters:
+      gameId:
+        description: Unique identifier of the game (ULID format)
+        example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+    messages:
+      AuthSuccess:
+        $ref: '#/components/messages/AuthSuccess'
+      AuthFailed:
+        $ref: '#/components/messages/AuthFailed'
+      MoveAttempt:
+        $ref: '#/components/messages/MoveAttempt'
+      MoveExecuted:
+        $ref: '#/components/messages/MoveExecuted'
+      MoveRejected:
+        $ref: '#/components/messages/MoveRejected'
+      GameStateSync:
+        $ref: '#/components/messages/GameStateSync'
+      PlayerDisconnected:
+        $ref: '#/components/messages/PlayerDisconnected'
+      PlayerReconnected:
+        $ref: '#/components/messages/PlayerReconnected'
+      Resign:
+        $ref: '#/components/messages/Resign'
+      GameResigned:
+        $ref: '#/components/messages/GameResigned'
+      OfferDraw:
+        $ref: '#/components/messages/OfferDraw'
+      DrawOffered:
+        $ref: '#/components/messages/DrawOffered'
+      AcceptDraw:
+        $ref: '#/components/messages/AcceptDraw'
+      DrawAccepted:
+        $ref: '#/components/messages/DrawAccepted'
+      RejectDraw:
+        $ref: '#/components/messages/RejectDraw'
+      DrawRejected:
+        $ref: '#/components/messages/DrawRejected'
+      Error:
+        $ref: '#/components/messages/Error'
+
+  spectate:
+    address: /ws/game/{gameId}/spectate
+    description: |
+      WebSocket channel for observing a game (read-only).
+      Spectators receive all game events but cannot send moves.
+
+      **Authentication**: JWT required
+      **Connection scope**: One connection per UserId (observer)
+      **Permissions**: Read-only (no client → server messages)
+    parameters:
+      gameId:
+        description: Unique identifier of the game to observe (ULID format)
+        example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+    messages:
+      AuthSuccess:
+        $ref: '#/components/messages/AuthSuccess'
+      AuthFailed:
+        $ref: '#/components/messages/AuthFailed'
+      GameStateSync:
+        $ref: '#/components/messages/GameStateSync'
+      MoveExecuted:
+        $ref: '#/components/messages/MoveExecuted'
+      PlayerDisconnected:
+        $ref: '#/components/messages/PlayerDisconnected'
+      PlayerReconnected:
+        $ref: '#/components/messages/PlayerReconnected'
+      GameResigned:
+        $ref: '#/components/messages/GameResigned'
+      DrawAccepted:
+        $ref: '#/components/messages/DrawAccepted'
+
+components:
+  messages:
+    # ========== Authentication Messages ==========
+    AuthSuccess:
+      summary: Authentication successful
+      description: Sent by server immediately after successful JWT validation
+      payload:
+        type: object
+        required: [type, userId]
+        properties:
+          type:
+            type: string
+            const: AuthSuccess
+          userId:
+            type: string
+            description: User ID (ULID format)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    AuthFailed:
+      summary: Authentication failed
+      description: Sent by server when JWT validation fails
+      payload:
+        type: object
+        required: [type, reason]
+        properties:
+          type:
+            type: string
+            const: AuthFailed
+          reason:
+            type: string
+            description: Reason for authentication failure
+            example: 'Invalid or expired token'
+
+    # ========== Matchmaking Messages ==========
+    JoinQueue:
+      summary: Join matchmaking queue (unified for humans and bots)
+      description: |
+        Client → Server. User requests to join matchmaking.
+
+        **Human vs Human** (default): Omit `bot` parameter or set to `false`.
+        User joins FIFO queue and waits for another human opponent.
+
+        **Human vs Bot**: Set `bot: true` for instant matching with a bot.
+        Optionally specify `botId` (specific bot) and `playerColor` (WHITE/BLACK preference).
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: JoinQueue
+          bot:
+            type: boolean
+            description: Request to play against a bot (default false)
+            default: false
+            example: true
+          botId:
+            type: string
+            description: Specific bot ID (ULID format). If not specified, a random bot is selected.
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          playerColor:
+            type: string
+            description: Desired color for the human player. If not specified, randomly assigned.
+            enum: [WHITE, BLACK]
+            example: 'WHITE'
+
+    QueuePositionUpdate:
+      summary: Queue position update
+      description: Server → Client. Current position in the matchmaking queue
+      payload:
+        type: object
+        required: [type, position]
+        properties:
+          type:
+            type: string
+            const: QueuePositionUpdate
+          position:
+            type: integer
+            description: Current position in queue (1-indexed)
+            minimum: 1
+            example: 1
+
+    MatchFound:
+      summary: Match found
+      description: |
+        Server → Client. Match found and game created.
+        Client should disconnect from matchmaking and connect to /ws/game/{gameId}
+
+        **Important**: The opponent may be a human or a bot (username starts with "bot_").
+        Bots automatically calculate and execute moves after each human move.
+      payload:
+        type: object
+        required: [type, gameId, yourColor, playerId]
+        properties:
+          type:
+            type: string
+            const: MatchFound
+          gameId:
+            type: string
+            description: ID of the created game (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          yourColor:
+            type: string
+            description: Color assigned to this player
+            enum: [WHITE, BLACK]
+            example: 'WHITE'
+          playerId:
+            type: string
+            description: PlayerId for this participation (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          opponentUserId:
+            type: string
+            description: |
+              Opponent's UserId (optional, for display).
+              For bot games, this is the bot's system user ID (username starts with "bot_").
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    MatchmakingError:
+      summary: Matchmaking error
+      description: Server → Client. Error during matchmaking process
+      payload:
+        type: object
+        required: [type, code, message]
+        properties:
+          type:
+            type: string
+            const: MatchmakingError
+          code:
+            type: string
+            description: Error code
+            example: 'ALREADY_IN_QUEUE'
+          message:
+            type: string
+            description: Human-readable error message
+            example: 'User is already in the matchmaking queue'
+
+    # ========== Gameplay Messages ==========
+    MoveAttempt:
+      summary: Attempt to make a move
+      description: Client → Server. Player attempts to make a move
+      payload:
+        type: object
+        required: [type, from, to]
+        properties:
+          type:
+            type: string
+            const: MoveAttempt
+          from:
+            type: string
+            description: Starting position (algebraic notation)
+            pattern: '^[a-h][1-8]$'
+            example: 'e2'
+          to:
+            type: string
+            description: Destination position (algebraic notation)
+            pattern: '^[a-h][1-8]$'
+            example: 'e4'
+          promotion:
+            type: string
+            description: Piece to promote to (for pawn promotion)
+            enum: [QUEEN, ROOK, BISHOP, KNIGHT]
+            example: 'QUEEN'
+
+    MoveExecuted:
+      summary: Move executed successfully
+      description: |
+        Server → Client. Move validated and executed.
+        Broadcast to both players and all spectators.
+
+        **Bot Moves**: This message is also sent for bot moves, which are
+        automatically calculated and executed by ExecuteBotMoveUseCase after
+        each human move in bot games.
+      payload:
+        type: object
+        required: [type, move, newPositionFen, gameStatus, currentSide, isCheck]
+        properties:
+          type:
+            type: string
+            const: MoveExecuted
+          move:
+            $ref: '#/components/schemas/Move'
+          newPositionFen:
+            type: string
+            description: New board position in FEN notation
+            example: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'
+          gameStatus:
+            type: string
+            description: Current game status
+            enum: [IN_PROGRESS, CHECK, CHECKMATE, STALEMATE, DRAW, RESIGNED]
+            example: 'IN_PROGRESS'
+          currentSide:
+            type: string
+            description: Whose turn it is now
+            enum: [WHITE, BLACK]
+            example: 'BLACK'
+          isCheck:
+            type: boolean
+            description: |
+              True if the current player (currentSide) is in check.
+              Useful for UI feedback to highlight the king in danger.
+            example: false
+
+    MoveRejected:
+      summary: Move rejected (invalid)
+      description: |
+        Server → Client. Move validation failed.
+        Sent only to the player who attempted the move.
+      payload:
+        type: object
+        required: [type, reason]
+        properties:
+          type:
+            type: string
+            const: MoveRejected
+          reason:
+            type: string
+            description: Reason for rejection
+            example: 'Not your turn'
+
+    GameStateSync:
+      summary: Complete game state synchronization
+      description: |
+        Server → Client. Full game state.
+        Sent on connection, reconnection, or explicit request.
+      payload:
+        type: object
+        required: [type, gameId, positionFen, moveHistory, gameStatus, currentSide, whitePlayerId, blackPlayerId]
+        properties:
+          type:
+            type: string
+            const: GameStateSync
+          gameId:
+            type: string
+            description: Game ID (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          positionFen:
+            type: string
+            description: Current board position in FEN notation
+            example: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+          moveHistory:
+            type: array
+            description: List of all moves played
+            items:
+              $ref: '#/components/schemas/Move'
+          gameStatus:
+            type: string
+            description: Current game status
+            enum: [IN_PROGRESS, CHECK, CHECKMATE, STALEMATE, DRAW, RESIGNED]
+            example: 'IN_PROGRESS'
+          currentSide:
+            type: string
+            description: Whose turn it is
+            enum: [WHITE, BLACK]
+            example: 'WHITE'
+          whitePlayerId:
+            type: string
+            description: PlayerId of white player (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          blackPlayerId:
+            type: string
+            description: PlayerId of black player (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    PlayerDisconnected:
+      summary: Player disconnected
+      description: Server → Client. A player disconnected from the game
+      payload:
+        type: object
+        required: [type, playerId]
+        properties:
+          type:
+            type: string
+            const: PlayerDisconnected
+          playerId:
+            type: string
+            description: PlayerId of the disconnected player (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    PlayerReconnected:
+      summary: Player reconnected
+      description: Server → Client. A player reconnected to the game
+      payload:
+        type: object
+        required: [type, playerId]
+        properties:
+          type:
+            type: string
+            const: PlayerReconnected
+          playerId:
+            type: string
+            description: PlayerId of the reconnected player (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    # ========== Resignation and Draw Messages ==========
+    Resign:
+      summary: Player resigns from the game
+      description: |
+        Client → Server. Player resigns, ending the game immediately.
+        The resigning player loses the game.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: Resign
+
+    GameResigned:
+      summary: A player has resigned
+      description: |
+        Server → Client. A player resigned from the game.
+        Broadcast to both players and all spectators.
+        The game ends immediately with RESIGNED status.
+      payload:
+        type: object
+        required: [type, resignedPlayerId, gameStatus]
+        properties:
+          type:
+            type: string
+            const: GameResigned
+          resignedPlayerId:
+            type: string
+            description: PlayerId of the player who resigned (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          gameStatus:
+            type: string
+            const: RESIGNED
+            description: Game status after resignation
+
+    OfferDraw:
+      summary: Offer a draw
+      description: |
+        Client → Server. Player offers a draw to their opponent.
+        Only one draw offer can be pending at a time.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: OfferDraw
+
+    DrawOffered:
+      summary: Draw offer received
+      description: |
+        Server → Client. Sent to the opponent when a draw is offered.
+        The opponent can respond with AcceptDraw or RejectDraw.
+      payload:
+        type: object
+        required: [type, offeredByPlayerId]
+        properties:
+          type:
+            type: string
+            const: DrawOffered
+          offeredByPlayerId:
+            type: string
+            description: PlayerId of the player who offered the draw (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    AcceptDraw:
+      summary: Accept a draw offer
+      description: |
+        Client → Server. Player accepts a pending draw offer.
+        The game ends immediately in a draw.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: AcceptDraw
+
+    DrawAccepted:
+      summary: Draw offer accepted
+      description: |
+        Server → Client. A draw offer has been accepted.
+        Broadcast to both players and all spectators.
+        The game ends immediately with DRAW status.
+      payload:
+        type: object
+        required: [type, acceptedByPlayerId, gameStatus]
+        properties:
+          type:
+            type: string
+            const: DrawAccepted
+          acceptedByPlayerId:
+            type: string
+            description: PlayerId of the player who accepted the draw (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+          gameStatus:
+            type: string
+            const: DRAW
+            description: Game status after accepting the draw
+
+    RejectDraw:
+      summary: Reject a draw offer
+      description: |
+        Client → Server. Player rejects a pending draw offer.
+        The game continues normally.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: RejectDraw
+
+    DrawRejected:
+      summary: Draw offer rejected
+      description: |
+        Server → Client. Sent to the player who offered the draw.
+        The draw offer has been rejected and the game continues.
+      payload:
+        type: object
+        required: [type, rejectedByPlayerId]
+        properties:
+          type:
+            type: string
+            const: DrawRejected
+          rejectedByPlayerId:
+            type: string
+            description: PlayerId of the player who rejected the draw (ULID)
+            example: '01HQZNR7X8A9C2D4E6F8G0H2J4'
+
+    # ========== Common Messages ==========
+    Error:
+      summary: Generic error
+      description: Server → Client. Generic error message
+      payload:
+        type: object
+        required: [type, code, message]
+        properties:
+          type:
+            type: string
+            const: Error
+          code:
+            type: string
+            description: Error code
+            example: 'INVALID_MESSAGE'
+          message:
+            type: string
+            description: Human-readable error message
+            example: 'Failed to parse message'
+
+  schemas:
+    Move:
+      type: object
+      description: Represents a chess move
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          description: Starting position (algebraic notation)
+          pattern: '^[a-h][1-8]$'
+          example: 'e2'
+        to:
+          type: string
+          description: Destination position (algebraic notation)
+          pattern: '^[a-h][1-8]$'
+          example: 'e4'
+        promotion:
+          type: string
+          description: Piece to promote to (for pawn promotion)
+          enum: [QUEEN, ROOK, BISHOP, KNIGHT]
+          example: 'QUEEN'
+
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT authentication for WebSocket connections.
+
+        The JWT token must be provided in one of two ways:
+        1. Query parameter: ws://localhost:8080/ws/matchmaking?token=YOUR_JWT_TOKEN
+        2. Sec-WebSocket-Protocol header: Bearer YOUR_JWT_TOKEN
+
+        The token must contain a 'userId' claim.
+        Token validity: 24 hours (configurable)
