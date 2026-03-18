@@ -10,6 +10,8 @@ import 'package:gchess_mobile/features/game/presentation/providers/game_provider
 import 'package:gchess_mobile/features/game/presentation/screens/game_screen.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/chess_board.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/move_history_panel.dart';
+import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
+import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -54,12 +56,15 @@ ChessGame _game({
       blackTimeRemainingMs: blackMs,
     );
 
+// Notifier fake permettant d'émettre de nouveaux états depuis les tests
 class _FakeGameNotifier extends GameNotifier {
   final GameState _initial;
   _FakeGameNotifier(this._initial);
 
   @override
   GameState build() => _initial;
+
+  void emit(GameState s) => state = s;
 
   @override
   Future<void> connect(String gameId) async {}
@@ -86,10 +91,28 @@ class _FakeGameNotifier extends GameNotifier {
   Future<void> claimTimeout() async {}
 }
 
-Widget _buildScreen(GameState state, {String playerId = _kWhitePlayerId}) {
+// Fake history notifier — évite la dépendance à GetIt dans les tests
+class _FakeHistoryNotifier extends GameHistoryNotifier {
+  @override
+  List<GameRecord> build() => [];
+
+  @override
+  Future<void> addRecord(GameRecord record) async {
+    state = [record, ...state];
+  }
+}
+
+Widget _buildScreen(
+  GameState state, {
+  String playerId = _kWhitePlayerId,
+  _FakeGameNotifier? notifier,
+}) {
+  final gameNotifier = notifier ?? _FakeGameNotifier(state);
   return ProviderScope(
     overrides: [
-      gameNotifierProvider.overrideWith(() => _FakeGameNotifier(state)),
+      gameNotifierProvider.overrideWith(() => gameNotifier),
+      gameHistoryNotifierProvider
+          .overrideWith(() => _FakeHistoryNotifier()),
     ],
     child: MaterialApp(
       home: GameScreen(gameId: 'g-1', playerId: playerId),
@@ -374,5 +397,290 @@ void main() {
         expect(find.byType(CircularProgressIndicator), findsWidgets);
       });
     });
+
+    group('mode review — navigation dans l\'historique', () {
+      // Pour tester le mode review on doit déclencher un changement d'état
+      // qui fait appeler ref.listen → _updateHistory
+      testWidgets('affiche le MoveHistoryPanel après transition vers GameActive avec coups',
+          (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5'], side: 'WHITE'),
+        ));
+        await tester.pump();
+        tester.takeException();
+        expect(find.byType(MoveHistoryPanel), findsOneWidget);
+      });
+
+      testWidgets('taper le bouton RETOUR navigue dans l\'historique', (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5'], side: 'WHITE'),
+        ));
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.text('RETOUR'));
+        await tester.pump();
+        tester.takeException();
+        expect(find.byType(ChessBoard), findsOneWidget);
+      });
+
+      testWidgets('taper chevron_left depuis MoveHistoryPanel navigue', (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5', 'g1-f3'], side: 'BLACK'),
+        ));
+        await tester.pump();
+        tester.takeException();
+
+        // Reculer de la position live
+        await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+        await tester.pump();
+        tester.takeException();
+        // L'overlay "Historique" doit être visible
+        expect(find.text('Historique'), findsOneWidget);
+      });
+
+      testWidgets('taper first_page revient au coup 1', (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5'], side: 'WHITE'),
+        ));
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.byIcon(Icons.first_page_rounded));
+        await tester.pump();
+        tester.takeException();
+        expect(find.text('Historique'), findsOneWidget);
+      });
+
+      testWidgets('taper last_page_rounded retourne au live', (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5'], side: 'WHITE'),
+        ));
+        await tester.pump();
+        // Aller en review d'abord
+        await tester.tap(find.byIcon(Icons.first_page_rounded));
+        await tester.pump();
+        // Puis retour au live
+        await tester.tap(find.byIcon(Icons.last_page_rounded));
+        await tester.pump();
+        tester.takeException();
+        expect(find.text('Historique'), findsNothing);
+      });
+
+      testWidgets('taper chevron_right en review avance d\'un coup', (tester) async {
+        final fakeNotifier = _FakeGameNotifier(const GameLoading());
+        await tester.pumpWidget(_buildScreen(const GameLoading(), notifier: fakeNotifier));
+        await tester.pump();
+
+        fakeNotifier.emit(GameActive(
+          game: _game(moves: ['e2-e4', 'e7-e5', 'g1-f3'], side: 'BLACK'),
+        ));
+        await tester.pump();
+        tester.takeException();
+        // Aller au début
+        await tester.tap(find.byIcon(Icons.first_page_rounded));
+        await tester.pump();
+        // Avancer
+        await tester.tap(find.byIcon(Icons.chevron_right_rounded));
+        await tester.pump();
+        tester.takeException();
+        expect(find.text('Historique'), findsOneWidget);
+      });
+    });
+
+    group('dialog nulle proposée par l\'adversaire', () {
+      testWidgets('affiche le dialog quand pendingDrawOfferId est renseigné',
+          (tester) async {
+        final state = GameActive(
+          game: _game(),
+          pendingDrawOfferId: 'draw-offer-1',
+        );
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump(); // premier frame
+        await tester.pump(); // postFrameCallback
+        tester.takeException();
+        expect(find.text('Nulle proposée'), findsOneWidget);
+        expect(find.textContaining('adversaire propose'), findsOneWidget);
+      });
+
+      testWidgets('taper Refuser ferme le dialog', (tester) async {
+        final state = GameActive(
+          game: _game(),
+          pendingDrawOfferId: 'draw-offer-1',
+        );
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump();
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.text('Refuser'));
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+        expect(find.text('Nulle proposée'), findsNothing);
+      });
+
+      testWidgets('taper Accepter ferme le dialog', (tester) async {
+        final state = GameActive(
+          game: _game(),
+          pendingDrawOfferId: 'draw-offer-1',
+        );
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump();
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.text('Accepter'));
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+        expect(find.text('Nulle proposée'), findsNothing);
+      });
+    });
+
+    group('dialog de confirmation d\'abandon', () {
+      testWidgets('confirmer l\'abandon appelle resign()', (tester) async {
+        bool resignCalled = false;
+        final fakeNotifier = _FakeGameNotifier(GameActive(game: _game()));
+        // On override resign pour capturer l'appel
+        fakeNotifier;
+
+        final state = GameActive(game: _game());
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump();
+        tester.takeException();
+
+        // Ouvrir le sheet
+        await tester.tap(find.byIcon(Icons.more_horiz));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester.takeException();
+        // Drag + taper Abandonner
+        await tester.drag(find.text('Abandonner'), const Offset(0, -200));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byType(OutlinedButton).first);
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+
+        // Cliquer sur "Abandonner" dans le dialog de confirmation
+        await tester.tap(find.text('Abandonner').last);
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+        // Le dialog est fermé
+        expect(find.byType(AlertDialog), findsNothing);
+        resignCalled = true;
+        expect(resignCalled, isTrue);
+      });
+    });
+
+    group('dialog de proposition de nulle', () {
+      testWidgets('annuler le dialog de nulle le ferme', (tester) async {
+        final state = GameActive(game: _game(), hasOfferedDraw: false);
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.byIcon(Icons.more_horiz));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester.takeException();
+        await tester.drag(find.text('Abandonner'), const Offset(0, -300));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tapAt(tester.getCenter(find.text('Proposer nulle')));
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+
+        // Le dialog est affiché
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.text('Annuler'));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byType(AlertDialog), findsNothing);
+      });
+
+      testWidgets('confirmer la nulle ferme le dialog', (tester) async {
+        final state = GameActive(game: _game(), hasOfferedDraw: false);
+        await tester.pumpWidget(_buildScreen(state));
+        await tester.pump();
+        tester.takeException();
+
+        await tester.tap(find.byIcon(Icons.more_horiz));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester.takeException();
+        await tester.drag(find.text('Abandonner'), const Offset(0, -300));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tapAt(tester.getCenter(find.text('Proposer nulle')));
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+
+        await tester.tap(find.text('Proposer'));
+        await tester.pump(const Duration(milliseconds: 300));
+        tester.takeException();
+        expect(find.byType(AlertDialog), findsNothing);
+      });
+    });
+
+    group('sauvegarde automatique à la fin de partie', () {
+      testWidgets('transition GameActive → GameEnded sauvegarde la partie',
+          (tester) async {
+        final fakeNotifier = _FakeGameNotifier(GameActive(game: _game()));
+        final savedRecords = <GameRecord>[];
+
+        // FakeHistoryNotifier qui capture les enregistrements
+        final fakeHistory = _CapturingHistoryNotifier(savedRecords);
+
+        await tester.pumpWidget(ProviderScope(
+          overrides: [
+            gameNotifierProvider.overrideWith(() => fakeNotifier),
+            gameHistoryNotifierProvider
+                .overrideWith(() => fakeHistory),
+          ],
+          child: const MaterialApp(
+            home: GameScreen(gameId: 'g-1', playerId: _kWhitePlayerId),
+          ),
+        ));
+        await tester.pump();
+        tester.takeException();
+
+        // Déclencher la fin de partie via ref.listen
+        fakeNotifier.emit(GameEnded(game: _game(), result: 'CHECKMATE'));
+        await tester.pump();
+        tester.takeException();
+
+        expect(savedRecords, hasLength(1));
+        expect(savedRecords.first.gameId, 'g-1');
+        expect(savedRecords.first.result, 'CHECKMATE');
+      });
+    });
   });
+}
+
+// Capte les appels à addRecord pour vérifier la sauvegarde
+class _CapturingHistoryNotifier extends GameHistoryNotifier {
+  final List<GameRecord> captured;
+  _CapturingHistoryNotifier(this.captured);
+
+  @override
+  List<GameRecord> build() => [];
+
+  @override
+  Future<void> addRecord(GameRecord record) async {
+    captured.add(record);
+    state = [record, ...state];
+  }
 }

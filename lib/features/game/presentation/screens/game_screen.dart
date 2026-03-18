@@ -11,6 +11,8 @@ import 'package:gchess_mobile/features/game/presentation/providers/game_provider
 import 'package:gchess_mobile/features/game/presentation/widgets/chess_board.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/game_clock.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/move_history_panel.dart';
+import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
+import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 
 class GameScreen extends StatelessWidget {
   final String gameId;
@@ -299,6 +301,25 @@ class _GameViewState extends ConsumerState<GameView>
 
   void _navigateLast() => _returnToLive();
 
+  void _saveGameRecord(GameEnded state) {
+    final record = GameRecord.fromGame(
+      gameId: state.game.gameId,
+      playerId: widget.playerId,
+      whiteUsername: state.game.whitePlayer.username,
+      blackUsername: state.game.blackPlayer.username,
+      whitePlayerId: state.game.whitePlayer.playerId,
+      blackPlayerId: state.game.blackPlayer.playerId,
+      result: state.result,
+      winner: state.game.winner,
+      uciHistory: List<String>.from(state.game.moveHistory),
+      finalFen: state.game.positionFen,
+      totalTimeSeconds: state.game.totalTimeSeconds,
+      incrementSeconds: state.game.incrementSeconds,
+      playedAt: DateTime.now(),
+    );
+    ref.read(gameHistoryNotifierProvider.notifier).addRecord(record);
+  }
+
   void _tryFirePreMove(GameActive state) {
     if (_preMove == null) return;
     final isPlayerWhite =
@@ -338,6 +359,7 @@ class _GameViewState extends ConsumerState<GameView>
       }
       if (current is GameEnded) {
         setState(() => _preMove = null);
+        _saveGameRecord(current);
       }
       if (current is GameError) {
         ScaffoldMessenger.of(context).showSnackBar(

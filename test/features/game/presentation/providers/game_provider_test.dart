@@ -658,6 +658,52 @@ void main() {
       expect((state as GameEnded).result, 'RESIGNED');
     });
 
+    test('GameResignedEvent — le joueur qui abandonne (noir) donne la victoire au blanc',
+        () async {
+      when(
+        () => mockConnectToGame(any()),
+      ).thenAnswer((_) async => const Right(null));
+
+      final sub = container.listen(gameNotifierProvider, (_, __) {});
+      addTearDown(sub.close);
+
+      await container.read(gameNotifierProvider.notifier).connect(tGameId);
+      mockGameRepository.addEvent(GameStateSyncEvent(tActiveGame));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Noir (player2) abandonne → blanc (player1) gagne
+      mockGameRepository.addEvent(
+        GameResignedEvent(resignedPlayerId: 'player2', gameStatus: 'RESIGNED'),
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player1');
+    });
+
+    test('GameResignedEvent — le joueur qui abandonne (blanc) donne la victoire au noir',
+        () async {
+      when(
+        () => mockConnectToGame(any()),
+      ).thenAnswer((_) async => const Right(null));
+
+      final sub = container.listen(gameNotifierProvider, (_, __) {});
+      addTearDown(sub.close);
+
+      await container.read(gameNotifierProvider.notifier).connect(tGameId);
+      mockGameRepository.addEvent(GameStateSyncEvent(tActiveGame));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Blanc (player1) abandonne → noir (player2) gagne
+      mockGameRepository.addEvent(
+        GameResignedEvent(resignedPlayerId: 'player1', gameStatus: 'RESIGNED'),
+      );
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player2');
+    });
+
     test('DrawOfferedEvent sets pendingDrawOfferId', () async {
       when(
         () => mockConnectToGame(any()),
@@ -890,6 +936,207 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(container.read(gameNotifierProvider), isA<GameError>());
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Robustesse : séquences d'événements mixtes (sync + resign)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  group('robustesse séquence resign + GameStateSyncEvent', () {
+    // GameStateSyncEvent d'un jeu terminé avec winner null (comme peut l'envoyer le serveur)
+    ChessGame _resignedGameNoWinner() => const ChessGame(
+          gameId: tGameId,
+          positionFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR',
+          moveHistory: [],
+          gameStatus: GameStatus.resigned,
+          currentSide: 'WHITE',
+          isCheck: false,
+          whitePlayer: tWhitePlayer,
+          blackPlayer: tBlackPlayer,
+          winner: null, // le serveur ne remplit pas toujours ce champ
+        );
+
+    Future<void> _setupActiveGame() async {
+      when(() => mockConnectToGame(any()))
+          .thenAnswer((_) async => const Right(null));
+      final sub = container.listen(gameNotifierProvider, (_, __) {});
+      addTearDown(sub.close);
+      await container.read(gameNotifierProvider.notifier).connect(tGameId);
+      mockGameRepository.addEvent(GameStateSyncEvent(tActiveGame));
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    test(
+      'scénario A : resign reçu d\'abord puis sync(winner=null) — winner reste player1',
+      () async {
+        await _setupActiveGame();
+
+        // 1. Resign → winner calculé correctement
+        mockGameRepository.addEvent(
+          GameResignedEvent(resignedPlayerId: 'player2', gameStatus: 'RESIGNED'),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        // 2. Sync arrive après avec winner=null → NE doit PAS écraser le winner
+        mockGameRepository.addEvent(GameStateSyncEvent(_resignedGameNoWinner()));
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final state = container.read(gameNotifierProvider) as GameEnded;
+        expect(state.game.winner, 'player1',
+            reason: 'Le sync ne doit pas écraser le winner déjà calculé');
+      },
+    );
+
+    test(
+      'scénario B : sync(winner=null) reçu d\'abord puis resign — winner doit être corrigé',
+      () async {
+        await _setupActiveGame();
+
+        // 1. Sync avec état terminé mais winner=null
+        mockGameRepository.addEvent(GameStateSyncEvent(_resignedGameNoWinner()));
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        // 2. Resign arrive après → doit corriger le winner même si déjà GameEnded
+        mockGameRepository.addEvent(
+          GameResignedEvent(resignedPlayerId: 'player2', gameStatus: 'RESIGNED'),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final state = container.read(gameNotifierProvider) as GameEnded;
+        expect(state.game.winner, 'player1',
+            reason: 'Le resign doit corriger le winner même si déjà en GameEnded');
+      },
+    );
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Couverture exhaustive du champ `winner` pour tous les modes de fin
+  // ──────────────────────────────────────────────────────────────────────────
+
+  group('fin de partie — champ winner', () {
+    // Helper : connecte et envoie un GameStateSyncEvent pour partir d'un état actif
+    Future<void> _setupActiveGame() async {
+      when(() => mockConnectToGame(any()))
+          .thenAnswer((_) async => const Right(null));
+      final sub = container.listen(gameNotifierProvider, (_, __) {});
+      addTearDown(sub.close);
+      await container.read(gameNotifierProvider.notifier).connect(tGameId);
+      mockGameRepository.addEvent(GameStateSyncEvent(tActiveGame));
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    // Helper : construit un MoveExecutedEvent de fin de partie
+    MoveExecutedEvent _checkmateEvent({required String currentSide}) =>
+        MoveExecutedEvent(
+          move: const ChessMove(from: 'e1', to: 'e2'),
+          newPositionFen: tActiveGame.positionFen,
+          gameStatus: 'CHECKMATE',
+          currentSide: currentSide,
+          isCheck: true,
+        );
+
+    MoveExecutedEvent _stalemateEvent({required String currentSide}) =>
+        MoveExecutedEvent(
+          move: const ChessMove(from: 'e1', to: 'e2'),
+          newPositionFen: tActiveGame.positionFen,
+          gameStatus: 'STALEMATE',
+          currentSide: currentSide,
+          isCheck: false,
+        );
+
+    // ── Échec et mat ──────────────────────────────────────────────────────────
+
+    test('CHECKMATE currentSide=BLACK → blanc (player1) est vainqueur', () async {
+      await _setupActiveGame();
+      // Blanc joue le coup qui met noir en échec et mat → currentSide=BLACK (noir checmaté)
+      mockGameRepository.addEvent(_checkmateEvent(currentSide: 'BLACK'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player1',
+          reason: 'Black est échequeté → White gagne');
+    });
+
+    test('CHECKMATE currentSide=WHITE → noir (player2) est vainqueur', () async {
+      await _setupActiveGame();
+      // Noir joue le coup qui met blanc en échec et mat → currentSide=WHITE (blanc checmaté)
+      mockGameRepository.addEvent(_checkmateEvent(currentSide: 'WHITE'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player2',
+          reason: 'White est échequeté → Black gagne');
+    });
+
+    // ── Pat (stalemate = nulle) ───────────────────────────────────────────────
+
+    test('STALEMATE currentSide=BLACK → nulle (winner null)', () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(_stalemateEvent(currentSide: 'BLACK'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, isNull,
+          reason: 'Le stalemate est une nulle, aucun gagnant');
+    });
+
+    test('STALEMATE currentSide=WHITE → nulle (winner null)', () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(_stalemateEvent(currentSide: 'WHITE'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, isNull,
+          reason: 'Le stalemate est une nulle, aucun gagnant');
+    });
+
+    // ── Abandon ───────────────────────────────────────────────────────────────
+
+    test('RESIGNED joueur blanc abandonne → noir (player2) est vainqueur',
+        () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(
+          GameResignedEvent(resignedPlayerId: 'player1', gameStatus: 'RESIGNED'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player2');
+    });
+
+    test('RESIGNED joueur noir abandonne → blanc (player1) est vainqueur',
+        () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(
+          GameResignedEvent(resignedPlayerId: 'player2', gameStatus: 'RESIGNED'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, 'player1');
+    });
+
+    // ── Nulle acceptée ────────────────────────────────────────────────────────
+
+    test('DRAW accepté par noir (blanc avait proposé) → winner null', () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(
+          DrawAcceptedEvent(acceptedByPlayerId: 'player2', gameStatus: 'DRAW'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, isNull);
+      expect(state.result, 'DRAW');
+    });
+
+    test('DRAW accepté par blanc (noir avait proposé) → winner null', () async {
+      await _setupActiveGame();
+      mockGameRepository.addEvent(
+          DrawAcceptedEvent(acceptedByPlayerId: 'player1', gameStatus: 'DRAW'));
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      final state = container.read(gameNotifierProvider) as GameEnded;
+      expect(state.game.winner, isNull);
+      expect(state.result, 'DRAW');
     });
   });
 }

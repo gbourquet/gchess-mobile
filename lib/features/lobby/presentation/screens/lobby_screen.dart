@@ -84,29 +84,36 @@ class LobbyScreen extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          RichText(
-            text: TextSpan(
-              children: [
-                TextSpan(
-                  text: 'g',
-                  style: GoogleFonts.fredoka(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.neonCyan,
-                  ),
+          IconButton(
+            icon: const Icon(Icons.menu, color: AppColors.labelMuted),
+            onPressed: () => context.push(AppRoutes.history),
+          ),
+          Expanded(
+            child: Center(
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: 'g',
+                      style: GoogleFonts.fredoka(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.neonCyan,
+                      ),
+                    ),
+                    TextSpan(
+                      text: 'Chess',
+                      style: GoogleFonts.fredoka(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.labelWhite,
+                      ),
+                    ),
+                  ],
                 ),
-                TextSpan(
-                  text: 'Chess',
-                  style: GoogleFonts.fredoka(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.labelWhite,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-          const Spacer(),
           IconButton(
             icon: const Icon(Icons.logout, color: AppColors.labelMuted),
             onPressed: () {

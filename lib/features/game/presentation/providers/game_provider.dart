@@ -127,8 +127,31 @@ class GameNotifier extends Notifier<GameState> {
     );
 
     if (chessGame.gameStatus != GameStatus.active) {
+      // Préserver le winner déjà calculé localement si le serveur ne le fournit pas.
+      // Peut arriver quand resign/timeout est reçu avant le sync final du serveur.
+      final knownWinner = state is GameEnded
+          ? (state as GameEnded).game.winner
+          : null;
+      final finalWinner = chessGame.winner ?? knownWinner;
+      final finalGame = finalWinner != chessGame.winner
+          ? ChessGame(
+              gameId: chessGame.gameId,
+              positionFen: chessGame.positionFen,
+              moveHistory: chessGame.moveHistory,
+              gameStatus: chessGame.gameStatus,
+              currentSide: chessGame.currentSide,
+              isCheck: chessGame.isCheck,
+              whitePlayer: chessGame.whitePlayer,
+              blackPlayer: chessGame.blackPlayer,
+              winner: finalWinner,
+              totalTimeSeconds: chessGame.totalTimeSeconds,
+              incrementSeconds: chessGame.incrementSeconds,
+              whiteTimeRemainingMs: chessGame.whiteTimeRemainingMs,
+              blackTimeRemainingMs: chessGame.blackTimeRemainingMs,
+            )
+          : chessGame;
       state = GameEnded(
-        game: chessGame,
+        game: finalGame,
         result: chessGame.gameStatus.toString(),
       );
     } else {
@@ -168,6 +191,15 @@ class GameNotifier extends Notifier<GameState> {
       _repo.claimTimeout();
     }
 
+    final newStatus = GameStatusExtension.fromString(event.gameStatus);
+    // Pour un mat, le gagnant est le joueur dont ce n'est PAS le tour
+    // (currentSide est le camp échequeté = perdant)
+    final winnerId = newStatus == GameStatus.checkmate
+        ? (event.currentSide == 'WHITE'
+            ? currentState.game.blackPlayer.playerId
+            : currentState.game.whitePlayer.playerId)
+        : null;
+
     final updatedGame = ChessGame(
       gameId: currentState.game.gameId,
       positionFen: event.newPositionFen,
@@ -175,12 +207,12 @@ class GameNotifier extends Notifier<GameState> {
         ...currentState.game.moveHistory,
         '${event.move.from}-${event.move.to}',
       ],
-      gameStatus: GameStatusExtension.fromString(event.gameStatus),
+      gameStatus: newStatus,
       currentSide: event.currentSide,
       isCheck: event.isCheck,
       whitePlayer: currentState.game.whitePlayer,
       blackPlayer: currentState.game.blackPlayer,
-      winner: currentState.game.winner,
+      winner: winnerId,
       totalTimeSeconds: currentState.totalTimeSeconds,
       incrementSeconds: currentState.incrementSeconds,
       whiteTimeRemainingMs: event.whiteTimeRemainingMs,
@@ -207,26 +239,53 @@ class GameNotifier extends Notifier<GameState> {
 
   void _onGameResigned(GameResignedEvent event) {
     print('🏳 _onGameResigned: ${event.resignedPlayerId}');
-    if (state is! GameActive) return;
-    final currentState = state as GameActive;
 
-    final updatedGame = ChessGame(
-      gameId: currentState.game.gameId,
-      positionFen: currentState.game.positionFen,
-      moveHistory: currentState.game.moveHistory,
-      gameStatus: GameStatus.resigned,
-      currentSide: currentState.game.currentSide,
-      isCheck: false,
-      whitePlayer: currentState.game.whitePlayer,
-      blackPlayer: currentState.game.blackPlayer,
-      winner: currentState.game.winner,
-      totalTimeSeconds: currentState.totalTimeSeconds,
-      incrementSeconds: currentState.incrementSeconds,
-      whiteTimeRemainingMs: currentState.whiteTimeRemainingMs,
-      blackTimeRemainingMs: currentState.blackTimeRemainingMs,
-    );
+    // Le gagnant est le joueur qui n'a pas abandonné
+    String _winnerId(ChessGame game) =>
+        event.resignedPlayerId == game.whitePlayer.playerId
+            ? game.blackPlayer.playerId
+            : game.whitePlayer.playerId;
 
-    state = GameEnded(game: updatedGame, result: 'RESIGNED');
+    if (state is GameActive) {
+      final currentState = state as GameActive;
+      final updatedGame = ChessGame(
+        gameId: currentState.game.gameId,
+        positionFen: currentState.game.positionFen,
+        moveHistory: currentState.game.moveHistory,
+        gameStatus: GameStatus.resigned,
+        currentSide: currentState.game.currentSide,
+        isCheck: false,
+        whitePlayer: currentState.game.whitePlayer,
+        blackPlayer: currentState.game.blackPlayer,
+        winner: _winnerId(currentState.game),
+        totalTimeSeconds: currentState.totalTimeSeconds,
+        incrementSeconds: currentState.incrementSeconds,
+        whiteTimeRemainingMs: currentState.whiteTimeRemainingMs,
+        blackTimeRemainingMs: currentState.blackTimeRemainingMs,
+      );
+      state = GameEnded(game: updatedGame, result: 'RESIGNED');
+    } else if (state is GameEnded) {
+      // Le sync a pu arriver en premier avec winner=null — on corrige le winner
+      final ended = state as GameEnded;
+      if (ended.game.winner == null) {
+        final corrected = ChessGame(
+          gameId: ended.game.gameId,
+          positionFen: ended.game.positionFen,
+          moveHistory: ended.game.moveHistory,
+          gameStatus: ended.game.gameStatus,
+          currentSide: ended.game.currentSide,
+          isCheck: ended.game.isCheck,
+          whitePlayer: ended.game.whitePlayer,
+          blackPlayer: ended.game.blackPlayer,
+          winner: _winnerId(ended.game),
+          totalTimeSeconds: ended.game.totalTimeSeconds,
+          incrementSeconds: ended.game.incrementSeconds,
+          whiteTimeRemainingMs: ended.game.whiteTimeRemainingMs,
+          blackTimeRemainingMs: ended.game.blackTimeRemainingMs,
+        );
+        state = GameEnded(game: corrected, result: 'RESIGNED');
+      }
+    }
   }
 
   void _onDrawOffered(DrawOfferedEvent event) {

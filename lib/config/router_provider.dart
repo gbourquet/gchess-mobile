@@ -9,6 +9,7 @@ import 'package:gchess_mobile/features/lobby/presentation/screens/lobby_screen.d
 import 'package:gchess_mobile/features/matchmaking/domain/entities/match_request.dart';
 import 'package:gchess_mobile/features/matchmaking/presentation/screens/matchmaking_queue_screen.dart';
 import 'package:gchess_mobile/features/game/presentation/screens/game_screen.dart';
+import 'package:gchess_mobile/features/history/presentation/screens/history_screen.dart';
 
 final appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -59,6 +60,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           return GameScreen(gameId: gameId, playerId: playerId);
         },
       ),
+      GoRoute(
+        path: AppRoutes.history,
+        builder: (context, state) => const HistoryScreen(),
+      ),
     ],
     redirect: (context, state) {
       final auth = ref.read(authNotifierProvider);
@@ -72,7 +77,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isOnProtectedRoute =
           state.matchedLocation == AppRoutes.lobby ||
           state.matchedLocation.startsWith(AppRoutes.matchmaking) ||
-          state.matchedLocation.startsWith(AppRoutes.game);
+          state.matchedLocation.startsWith(AppRoutes.game) ||
+          state.matchedLocation.startsWith(AppRoutes.history);
 
       if (isLoading || isOnSplash) return null;
 
