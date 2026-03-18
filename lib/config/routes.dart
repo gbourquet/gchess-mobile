@@ -10,6 +10,7 @@ class AppRoutes {
   static const String lobby = '/lobby';
   static const String matchmaking = '/matchmaking';
   static const String game = '/game';
+  static const String history = '/history';
 
   static String gameWithId(String gameId, String playerId) =>
       '/game/$gameId/$playerId';
