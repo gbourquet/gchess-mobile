@@ -1,85 +1,136 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Ce fichier fournit des instructions à Claude Code pour ce dépôt.
 
-## Project Overview
+## Vue d'ensemble du projet
 
-This repository contains API specifications for **gChess**, a chess application with a Kotlin backend following Domain-Driven Design (DDD) principles. The repository includes:
+Application mobile Flutter **gChess** pour jouer aux échecs en ligne.
+Backend Kotlin dans `../gChess` — specs REST dans `../gChess/src/main/resources/openapi/openapi.json`.
 
-- **openapi.json**: REST API specification
-- **asyncapi.yaml**: WebSocket API specification
+## Stack
 
-## API Architecture
+- **State management** : Riverpod v3 (`flutter_riverpod ^3.3.1`) — `Notifier`, `AsyncNotifier`, `autoDispose`
+- **Navigation** : GoRouter v17
+- **HTTP** : Dio + intercepteur JWT automatique (`ApiClient`)
+- **WebSocket** : `web_socket_channel`
+- **Logique échecs** : `chess ^0.8.1`
+- **DI** : GetIt + Injectable
+- **Either** : `dartz`
+- **Tests** : `mocktail`, pas de `bloc_test` (plus de BLoC)
 
-### REST API (openapi.json)
+## Architecture
 
-The REST API provides synchronous endpoints for:
+Clean Architecture par feature : `domain → data → presentation`
 
-- **Authentication**: User registration (`/api/auth/register`) and login (`/api/auth/login`) with JWT token generation
-- **Bot Management**: List all bots (`/api/bots`) and retrieve bot details (`/api/bots/{id}`)
+```
+lib/
+├── config/           # app_config, router_provider, routes, theme
+├── core/             # ApiClient (Dio), WebSocketClient, SecureStorage, PreferencesStorage, injection
+└── features/
+    ├── auth/         # User, AuthNotifier (AsyncNotifier)
+    ├── lobby/        # LobbyScreen, sélection contrôle du temps
+    ├── matchmaking/  # MatchmakingNotifier (AsyncNotifier), WebSocket /ws/matchmaking
+    ├── game/         # GameNotifier (Notifier autoDispose), WebSocket /ws/game/{gameId}
+    └── history/      # GameHistoryNotifier (AsyncNotifier), REST /api/history/*
+```
 
-All authenticated endpoints require a JWT token in the `Authorization` header as `Bearer <token>`.
+## Règles de développement
 
-### WebSocket API (asyncapi.yaml)
+### TDD obligatoire
 
-The WebSocket API provides real-time communication across three channels:
+Toujours **Red → Green → Refactor**. Écrire le test qui échoue avant d'écrire le code.
 
-#### 1. Matchmaking Channel (`/ws/matchmaking`)
-- **Unified matchmaking** for both human vs human and human vs bot games
-- **Human vs Human**: FIFO queue system with position updates
-- **Human vs Bot**: Instant matching with optional bot selection and color preference
-- **Connection scope**: One connection per UserId
-- **Key messages**: `JoinQueue`, `QueuePositionUpdate`, `MatchFound`
+```bash
+flutter test                    # tous les tests
+flutter test <fichier_test>     # un fichier
+flutter test --coverage         # avec couverture
+```
 
-#### 2. Game Channel (`/ws/game/{gameId}`)
-- Real-time gameplay with move execution and validation
-- **Bot integration**: Bots automatically calculate and execute moves after human moves
-- **Connection scope**: One connection per PlayerId (game participation)
-- **Key messages**: `MoveAttempt`, `MoveExecuted`, `MoveRejected`, `GameStateSync`
-- Players can identify bot opponents by username prefix "bot_"
+Structure miroir : `lib/features/foo/bar.dart` → `test/features/foo/bar_test.dart`
 
-#### 3. Spectate Channel (`/ws/game/{gameId}/spectate`)
-- Read-only observation of ongoing games
-- **Connection scope**: One connection per UserId (observer)
-- Receives all game events but cannot send moves
+### Patterns Riverpod v3
 
-### Authentication Flow
+```dart
+// Notifier synchrone (game)
+final myProvider = NotifierProvider.autoDispose<MyNotifier, MyState>(MyNotifier.new);
+class MyNotifier extends Notifier<MyState> { ... }
 
-WebSocket connections require JWT authentication via:
-1. Query parameter: `?token=YOUR_JWT_TOKEN`
-2. Sec-WebSocket-Protocol header: `Bearer YOUR_JWT_TOKEN`
+// Notifier asynchrone (auth, history)
+final myProvider = AsyncNotifierProvider<MyNotifier, List<T>>(MyNotifier.new);
+class MyNotifier extends AsyncNotifier<List<T>> { ... }
 
-All connections receive `AuthSuccess` or `AuthFailed` messages upon connection.
+// Tests : ProviderContainer isolé, dispose en tearDown
+final container = ProviderContainer(overrides: [...]);
+addTearDown(container.dispose);
+```
 
-### Domain-Driven Design Context
+### Mocks
 
-The architecture uses bounded contexts:
-- **Matchmaking**: Indexed by UserId (permanent user identity)
-- **Gameplay**: Indexed by PlayerId (per-game participation)
-- **Spectators**: Indexed by UserId (observers)
-- **Shared Kernel**: WebSocketJwtAuth (authentication across all contexts)
+- Interfaces de repository → fakes manuels (classe concrète qui implémente l'interface)
+- Classes concrètes → `mocktail`
+- Enregistrer les fallback values pour les types custom : `registerFallbackValue(...)`
 
-### Bot System
+### Gestion d'état Riverpod dans les widgets
 
-Bots are integrated into the unified matchmaking flow:
-- Bot games use the same WebSocket endpoints as human games
-- Bot moves are triggered automatically via `ExecuteBotMoveUseCase`
-- Bots can be selected randomly or by specific botId
-- Player color can be specified or randomly assigned
+```dart
+// ConsumerWidget (lecture seule)
+class MyWidget extends ConsumerWidget {
+  Widget build(BuildContext context, WidgetRef ref) { ... }
+}
 
-### Identifiers
+// ConsumerStatefulWidget (état local + Riverpod)
+class MyWidget extends ConsumerStatefulWidget { ... }
+class _MyWidgetState extends ConsumerState<MyWidget> { ... }
+```
 
-The system uses ULID format for all identifiers:
-- UserId: Permanent user identity
-- PlayerId: Per-game participation identity
-- GameId: Unique game identifier
-- BotId: Bot opponent identifier
+### AsyncValue dans les écrans
 
-## Editing API Specifications
+```dart
+final asyncData = ref.watch(myAsyncProvider);
+asyncData.when(
+  loading: () => const CircularProgressIndicator(),
+  error: (e, _) => Text('Erreur : $e'),
+  data: (data) => MyWidget(data: data),
+);
+```
 
-When modifying the API specs:
-- **openapi.json**: Use JSON format, ensure all schemas are properly referenced under `#/components/schemas`
-- **asyncapi.yaml**: Use AsyncAPI 3.0.0 format, ensure all messages are properly referenced under `#/components/messages`
-- Maintain consistency between REST and WebSocket authentication mechanisms
-- Ensure bot-related features use the unified matchmaking approach
-- Keep ULID format for all identifiers
+## Endpoints backend
+
+### REST (via `ApiClient` — JWT auto-injecté)
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/auth/register` | Inscription |
+| `POST /api/auth/login` | Connexion → token JWT |
+| `GET /api/history/games` | Liste des parties du joueur connecté |
+| `GET /api/history/games/{gameId}/moves` | Coups d'une partie (UCI) |
+
+### WebSocket (token via `?token=<JWT>`)
+
+| Canal | Description |
+|---|---|
+| `/ws/matchmaking` | File d'attente et matching |
+| `/ws/game/{gameId}` | Gameplay temps réel |
+
+## Conventions
+
+- **Langue** : code en anglais, commentaires et messages utilisateur en français
+- **Nommage providers** : `fooNotifierProvider` + `FooNotifier`
+- **Identifiants** : format ULID (UserId permanent ≠ PlayerId par partie)
+- **Winner CHECKMATE** : le camp à jouer dans la position finale est le perdant (`chess.turn == Color.BLACK` → blanc gagne)
+- **Pas de `print()`** dans le code final (les `print` de debug dans `game_provider.dart` sont intentionnels pour le diagnostic)
+- **Couverture cible** : ≥ 80 % (actuellement 87,4 %)
+
+## Commandes utiles
+
+```bash
+# Régénérer le code (après modif @injectable ou @JsonSerializable)
+dart run build_runner build --delete-conflicting-outputs
+
+# Lancer l'app
+flutter run
+
+# Analyser
+flutter analyze
+flutter format lib test
+```
