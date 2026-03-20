@@ -10,8 +10,6 @@ import 'package:gchess_mobile/features/game/presentation/providers/game_provider
 import 'package:gchess_mobile/features/game/presentation/screens/game_screen.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/chess_board.dart';
 import 'package:gchess_mobile/features/game/presentation/widgets/move_history_panel.dart';
-import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
-import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -91,17 +89,6 @@ class _FakeGameNotifier extends GameNotifier {
   Future<void> claimTimeout() async {}
 }
 
-// Fake history notifier — évite la dépendance à GetIt dans les tests
-class _FakeHistoryNotifier extends GameHistoryNotifier {
-  @override
-  List<GameRecord> build() => [];
-
-  @override
-  Future<void> addRecord(GameRecord record) async {
-    state = [record, ...state];
-  }
-}
-
 Widget _buildScreen(
   GameState state, {
   String playerId = _kWhitePlayerId,
@@ -111,8 +98,6 @@ Widget _buildScreen(
   return ProviderScope(
     overrides: [
       gameNotifierProvider.overrideWith(() => gameNotifier),
-      gameHistoryNotifierProvider
-          .overrideWith(() => _FakeHistoryNotifier()),
     ],
     child: MaterialApp(
       home: GameScreen(gameId: 'g-1', playerId: playerId),
@@ -635,52 +620,5 @@ void main() {
       });
     });
 
-    group('sauvegarde automatique à la fin de partie', () {
-      testWidgets('transition GameActive → GameEnded sauvegarde la partie',
-          (tester) async {
-        final fakeNotifier = _FakeGameNotifier(GameActive(game: _game()));
-        final savedRecords = <GameRecord>[];
-
-        // FakeHistoryNotifier qui capture les enregistrements
-        final fakeHistory = _CapturingHistoryNotifier(savedRecords);
-
-        await tester.pumpWidget(ProviderScope(
-          overrides: [
-            gameNotifierProvider.overrideWith(() => fakeNotifier),
-            gameHistoryNotifierProvider
-                .overrideWith(() => fakeHistory),
-          ],
-          child: const MaterialApp(
-            home: GameScreen(gameId: 'g-1', playerId: _kWhitePlayerId),
-          ),
-        ));
-        await tester.pump();
-        tester.takeException();
-
-        // Déclencher la fin de partie via ref.listen
-        fakeNotifier.emit(GameEnded(game: _game(), result: 'CHECKMATE'));
-        await tester.pump();
-        tester.takeException();
-
-        expect(savedRecords, hasLength(1));
-        expect(savedRecords.first.gameId, 'g-1');
-        expect(savedRecords.first.result, 'CHECKMATE');
-      });
-    });
   });
-}
-
-// Capte les appels à addRecord pour vérifier la sauvegarde
-class _CapturingHistoryNotifier extends GameHistoryNotifier {
-  final List<GameRecord> captured;
-  _CapturingHistoryNotifier(this.captured);
-
-  @override
-  List<GameRecord> build() => [];
-
-  @override
-  Future<void> addRecord(GameRecord record) async {
-    captured.add(record);
-    state = [record, ...state];
-  }
 }

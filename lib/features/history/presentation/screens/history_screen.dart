@@ -2,16 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/theme.dart';
+import 'package:gchess_mobile/features/history/data/repositories/history_remote_repository.dart';
 import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
 import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 import 'package:gchess_mobile/features/history/presentation/screens/game_review_screen.dart';
 
-class HistoryScreen extends ConsumerWidget {
+class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final records = ref.watch(gameHistoryNotifierProvider);
+  ConsumerState<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends ConsumerState<HistoryScreen> {
+  bool _isLoadingGame = false;
+
+  Future<void> _onRecordTap(GameRecord partial) async {
+    if (_isLoadingGame) return;
+    setState(() => _isLoadingGame = true);
+    try {
+      final repo = ref.read(historyRemoteRepositoryProvider);
+      final full = await repo.loadFullRecord(partial);
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => GameReviewScreen(record: full)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingGame = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final historyAsync = ref.watch(gameHistoryNotifierProvider);
 
     return Scaffold(
       backgroundColor: AppColors.bgDeep,
@@ -32,16 +56,39 @@ class HistoryScreen extends ConsumerWidget {
             child: Column(
               children: [
                 _buildHeader(context),
+                if (_isLoadingGame)
+                  const LinearProgressIndicator(
+                    color: AppColors.neonCyan,
+                    backgroundColor: Colors.transparent,
+                  ),
                 Expanded(
-                  child: records.isEmpty
-                      ? _buildEmpty()
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          itemCount: records.length,
-                          itemBuilder: (context, index) =>
-                              _GameRecordTile(record: records[index]),
+                  child: historyAsync.when(
+                    loading: () => const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.neonCyan,
+                      ),
+                    ),
+                    error: (e, _) => Center(
+                      child: Text(
+                        'Erreur de chargement',
+                        style: GoogleFonts.fredoka(
+                          color: AppColors.labelMuted,
+                          fontSize: 16,
                         ),
+                      ),
+                    ),
+                    data: (records) => records.isEmpty
+                        ? _buildEmpty()
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            itemCount: records.length,
+                            itemBuilder: (context, index) => _GameRecordTile(
+                              record: records[index],
+                              onTap: () => _onRecordTap(records[index]),
+                            ),
+                          ),
+                  ),
                 ),
               ],
             ),
@@ -117,8 +164,9 @@ class HistoryScreen extends ConsumerWidget {
 
 class _GameRecordTile extends StatelessWidget {
   final GameRecord record;
+  final VoidCallback onTap;
 
-  const _GameRecordTile({required this.record});
+  const _GameRecordTile({required this.record, required this.onTap});
 
   String _resultLabel() {
     final r = record.result.toUpperCase();
@@ -131,13 +179,21 @@ class _GameRecordTile extends StatelessWidget {
   }
 
   String _outcomeLabel() {
-    if (record.winner == null) return '½-½';
+    if (record.winner == null) {
+      final r = record.result.toUpperCase();
+      if (r == 'DRAW' || r == 'STALEMATE') return '½-½';
+      return '-';
+    }
     if (record.winner == record.playerId) return 'Victoire';
     return 'Défaite';
   }
 
   Color _outcomeColor() {
-    if (record.winner == null) return AppColors.neonCyan;
+    if (record.winner == null) {
+      final r = record.result.toUpperCase();
+      if (r == 'DRAW' || r == 'STALEMATE') return AppColors.neonCyan;
+      return AppColors.labelMuted;
+    }
     if (record.winner == record.playerId) return AppColors.neonGold;
     return AppColors.clockDigitOpponent;
   }
@@ -157,8 +213,11 @@ class _GameRecordTile extends StatelessWidget {
   }
 
   String _moveCountLabel() {
-    final count = (record.sanHistory.length / 2).ceil();
-    return '$count coup${count > 1 ? 's' : ''}';
+    // Use rawMoveCount (from API summary) if available; fallback to sanHistory
+    final moves = record.rawMoveCount != null && record.rawMoveCount! > 0
+        ? (record.rawMoveCount! / 2).ceil()
+        : (record.sanHistory.length / 2).ceil();
+    return '$moves coup${moves > 1 ? 's' : ''}';
   }
 
   @override
@@ -168,11 +227,7 @@ class _GameRecordTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => GameReviewScreen(record: record),
-          ),
-        ),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

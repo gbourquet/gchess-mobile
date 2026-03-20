@@ -1,40 +1,31 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gchess_mobile/core/injection.dart';
-import 'package:gchess_mobile/core/storage/preferences_storage.dart';
-import 'package:gchess_mobile/features/history/data/repositories/game_history_repository.dart';
+import 'package:gchess_mobile/features/auth/presentation/providers/auth_provider.dart';
+import 'package:gchess_mobile/features/history/data/datasources/history_remote_data_source.dart';
+import 'package:gchess_mobile/features/history/data/repositories/history_remote_repository.dart';
 import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
 
-final gameHistoryRepositoryProvider = Provider<GameHistoryRepository>((ref) {
-  return GameHistoryRepository(getIt<PreferencesStorage>());
+final historyRemoteRepositoryProvider = Provider<HistoryRemoteRepository>((ref) {
+  return HistoryRemoteRepository(
+    HistoryRemoteDataSource(getIt()),
+  );
 });
 
 final gameHistoryNotifierProvider =
-    NotifierProvider<GameHistoryNotifier, List<GameRecord>>(
+    AsyncNotifierProvider<GameHistoryNotifier, List<GameRecord>>(
   GameHistoryNotifier.new,
 );
 
-class GameHistoryNotifier extends Notifier<List<GameRecord>> {
+class GameHistoryNotifier extends AsyncNotifier<List<GameRecord>> {
   @override
-  List<GameRecord> build() {
-    return ref.read(gameHistoryRepositoryProvider).loadAll();
+  Future<List<GameRecord>> build() async {
+    final user = await ref.watch(authNotifierProvider.future);
+    if (user == null) return [];
+    return ref.read(historyRemoteRepositoryProvider).fetchGames(user);
   }
 
-  Future<void> addRecord(GameRecord record) async {
-    await ref.read(gameHistoryRepositoryProvider).save(record);
-    state = ref.read(gameHistoryRepositoryProvider).loadAll();
-  }
-
-  Future<void> deleteRecord(String gameId) async {
-    await ref.read(gameHistoryRepositoryProvider).delete(gameId);
-    state = state.where((r) => r.gameId != gameId).toList();
-  }
-
-  Future<void> clearAll() async {
-    await ref.read(gameHistoryRepositoryProvider).clearAll();
-    state = [];
-  }
-
-  void reload() {
-    state = ref.read(gameHistoryRepositoryProvider).loadAll();
+  Future<void> reload() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(build);
   }
 }

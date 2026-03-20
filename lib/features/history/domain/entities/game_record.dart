@@ -16,6 +16,8 @@ class GameRecord {
   final int? totalTimeSeconds;
   final int? incrementSeconds;
   final DateTime playedAt;
+  // From backend summary (used when sanHistory is not yet loaded)
+  final int? rawMoveCount;
 
   const GameRecord({
     required this.gameId,
@@ -33,6 +35,7 @@ class GameRecord {
     this.totalTimeSeconds,
     this.incrementSeconds,
     required this.playedAt,
+    this.rawMoveCount,
   });
 
   bool get isPlayerWhite => whitePlayerId == playerId;
