@@ -1,10 +1,9 @@
 import 'dart:convert';
 import 'package:injectable/injectable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:gchess_mobile/features/history/data/repositories/history_storage_port.dart';
 
 @singleton
-class PreferencesStorage implements HistoryStoragePort {
+class PreferencesStorage {
   final SharedPreferences _preferences;
 
   static const _userKey = 'cached_user';

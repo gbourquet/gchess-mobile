@@ -1,120 +1,123 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gchess_mobile/features/history/data/repositories/game_history_repository.dart';
-import 'package:gchess_mobile/features/history/data/repositories/history_storage_port.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:gchess_mobile/features/auth/domain/entities/user.dart';
+import 'package:gchess_mobile/features/auth/presentation/providers/auth_provider.dart';
+import 'package:gchess_mobile/features/history/data/repositories/history_remote_repository.dart';
 import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
 import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 
-class FakeStorage implements HistoryStoragePort {
-  final Map<String, String> _store = {};
-
-  @override
-  String? getString(String key) => _store[key];
-
-  @override
-  Future<void> setString(String key, String value) async {
-    _store[key] = value;
-  }
-
-  @override
-  Future<void> remove(String key) async {
-    _store.remove(key);
-  }
+void _setupFallbacks() {
+  registerFallbackValue(
+    const User(id: '', username: '', email: ''),
+  );
 }
 
-GameRecord _makeRecord(String gameId) => GameRecord.fromGame(
+class _MockRepo extends Mock implements HistoryRemoteRepository {}
+
+class _FakeAuthNotifier extends AuthNotifier {
+  final User? _user;
+  _FakeAuthNotifier(this._user);
+
+  @override
+  Future<User?> build() async => _user;
+}
+
+const _alice = User(id: 'user-1', username: 'Alice', email: 'a@a.com');
+
+GameRecord _makeRecord(String gameId) => GameRecord(
       gameId: gameId,
-      playerId: 'player-white',
+      playerId: 'user-1',
       whiteUsername: 'Alice',
       blackUsername: 'Bob',
-      whitePlayerId: 'player-white',
-      blackPlayerId: 'player-black',
-      result: 'CHECKMATE',
-      winner: 'player-white',
-      uciHistory: const ['e2-e4'],
-      finalFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
-      playedAt: DateTime.utc(2026, 3, 17),
+      whitePlayerId: 'user-1',
+      blackPlayerId: 'user-2',
+      result: 'DRAW',
+      winner: null,
+      uciHistory: const [],
+      sanHistory: const [],
+      fenHistory: const [],
+      finalFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      totalTimeSeconds: null,
+      incrementSeconds: null,
+      playedAt: DateTime.utc(2026, 3, 20),
     );
+
+ProviderContainer _makeContainer({
+  required _MockRepo repo,
+  User? user = _alice,
+}) {
+  return ProviderContainer(
+    overrides: [
+      historyRemoteRepositoryProvider.overrideWithValue(repo),
+      authNotifierProvider.overrideWith(() => _FakeAuthNotifier(user)),
+    ],
+  );
+}
 
 void main() {
-  late FakeStorage fakeStorage;
-  late ProviderContainer container;
+  late _MockRepo mockRepo;
+
+  setUpAll(_setupFallbacks);
 
   setUp(() {
-    fakeStorage = FakeStorage();
-    container = ProviderContainer(
-      overrides: [
-        gameHistoryRepositoryProvider
-            .overrideWithValue(GameHistoryRepository(fakeStorage)),
-      ],
-    );
+    mockRepo = _MockRepo();
   });
 
-  tearDown(() => container.dispose());
+  group('GameHistoryNotifier (AsyncNotifier)', () {
+    test('retourne une liste vide si l\'API renvoie []', () async {
+      when(() => mockRepo.fetchGames(_alice)).thenAnswer((_) async => []);
+      final container = _makeContainer(repo: mockRepo);
+      addTearDown(container.dispose);
 
-  test('état initial est une liste vide', () {
-    expect(container.read(gameHistoryNotifierProvider), isEmpty);
-  });
+      final result = await container.read(gameHistoryNotifierProvider.future);
+      expect(result, isEmpty);
+    });
 
-  test('addRecord ajoute la partie et met à jour l\'état', () async {
-    final record = _makeRecord('game-1');
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(record);
+    test('charge la liste de parties depuis le repo', () async {
+      final records = [_makeRecord('g1'), _makeRecord('g2')];
+      when(() => mockRepo.fetchGames(_alice)).thenAnswer((_) async => records);
+      final container = _makeContainer(repo: mockRepo);
+      addTearDown(container.dispose);
 
-    final state = container.read(gameHistoryNotifierProvider);
-    expect(state, hasLength(1));
-    expect(state.first.gameId, 'game-1');
-  });
+      final result = await container.read(gameHistoryNotifierProvider.future);
+      expect(result, hasLength(2));
+    });
 
-  test('addRecord ajoute plusieurs parties dans l\'ordre inverse', () async {
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(_makeRecord('game-1'));
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(_makeRecord('game-2'));
+    test('reload recharge la liste depuis le repo', () async {
+      when(() => mockRepo.fetchGames(_alice))
+          .thenAnswer((_) async => [_makeRecord('g1')]);
+      final container = _makeContainer(repo: mockRepo);
+      addTearDown(container.dispose);
 
-    final state = container.read(gameHistoryNotifierProvider);
-    expect(state.first.gameId, 'game-2');
-    expect(state[1].gameId, 'game-1');
-  });
+      await container.read(gameHistoryNotifierProvider.future);
 
-  test('deleteRecord supprime la partie de l\'état', () async {
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(_makeRecord('game-1'));
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(_makeRecord('game-2'));
+      when(() => mockRepo.fetchGames(_alice))
+          .thenAnswer((_) async => [_makeRecord('g1'), _makeRecord('g2')]);
 
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .deleteRecord('game-1');
+      await container.read(gameHistoryNotifierProvider.notifier).reload();
+      final result = await container.read(gameHistoryNotifierProvider.future);
+      expect(result, hasLength(2));
+    });
 
-    final state = container.read(gameHistoryNotifierProvider);
-    expect(state, hasLength(1));
-    expect(state.first.gameId, 'game-2');
-  });
+    test('retourne [] si utilisateur non connecté', () async {
+      final container = _makeContainer(repo: mockRepo, user: null);
+      addTearDown(container.dispose);
 
-  test('clearAll vide l\'état', () async {
-    await container
-        .read(gameHistoryNotifierProvider.notifier)
-        .addRecord(_makeRecord('game-1'));
+      final result = await container.read(gameHistoryNotifierProvider.future);
+      expect(result, isEmpty);
+      // fetchGames should not have been called without a user
+      verifyNever(() => mockRepo.fetchGames(const User(id: 'user-1', username: 'Alice', email: 'a@a.com')));
+    });
 
-    await container.read(gameHistoryNotifierProvider.notifier).clearAll();
+    test('l\'état initial est AsyncLoading', () {
+      when(() => mockRepo.fetchGames(_alice)).thenAnswer((_) async => []);
+      final container = _makeContainer(repo: mockRepo);
+      addTearDown(container.dispose);
 
-    expect(container.read(gameHistoryNotifierProvider), isEmpty);
-  });
-
-  test('reload relit depuis le stockage', () async {
-    // Simuler des données déjà présentes dans le stockage
-    final repo = container.read(gameHistoryRepositoryProvider);
-    await repo.save(_makeRecord('game-preloaded'));
-
-    container.read(gameHistoryNotifierProvider.notifier).reload();
-
-    expect(container.read(gameHistoryNotifierProvider).first.gameId,
-        'game-preloaded');
+      // Before awaiting, the state should be loading
+      final state = container.read(gameHistoryNotifierProvider);
+      expect(state, isA<AsyncLoading<List<GameRecord>>>());
+    });
   });
 }
