@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dartz/dartz.dart';
 import 'package:injectable/injectable.dart';
 import 'package:gchess_mobile/core/error/exceptions.dart';
@@ -113,8 +115,38 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<Either<Failure, User?>> getCurrentUser() async {
     try {
       final token = await localDataSource.getToken();
-      if (token == null) {
-        return const Right(null);
+      if (token == null) return const Right(null);
+
+      if (_isTokenExpired(token)) {
+        final username = await localDataSource.getUsername();
+        final password = await localDataSource.getPassword();
+
+        if (username == null || password == null) {
+          await localDataSource.deleteToken();
+          return const Right(null);
+        }
+
+        if (!await networkInfo.isConnected) {
+          final user = await localDataSource.getUser();
+          return Right(user);
+        }
+
+        try {
+          final loginResponse = await remoteDataSource.login(
+            username: username,
+            password: password,
+          );
+          await localDataSource.saveToken(loginResponse.token);
+          await localDataSource.saveUser(loginResponse.user);
+          return Right(loginResponse.user);
+        } on AuthenticationException {
+          await localDataSource.deleteToken();
+          await localDataSource.deleteCredentials();
+          return const Right(null);
+        } on ServerException {
+          final user = await localDataSource.getUser();
+          return Right(user);
+        }
       }
 
       final user = await localDataSource.getUser();
@@ -123,6 +155,30 @@ class AuthRepositoryImpl implements AuthRepository {
       return Left(CacheFailure(e.message));
     } catch (e) {
       return Left(CacheFailure('Unexpected error getting user: $e'));
+    }
+  }
+
+  bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+
+      String payload = parts[1];
+      final remainder = payload.length % 4;
+      if (remainder != 0) {
+        payload = payload.padRight(payload.length + (4 - remainder), '=');
+      }
+
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final data = json.decode(decoded) as Map<String, dynamic>;
+
+      final exp = data['exp'] as int?;
+      if (exp == null) return false;
+
+      final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      return nowSeconds >= exp;
+    } catch (_) {
+      return true;
     }
   }
 }
