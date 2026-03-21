@@ -1,3 +1,6 @@
+# Deployment scripts (contain sensitive IDs)
+deploy.sh
+
 # Miscellaneous
 *.class
 *.log

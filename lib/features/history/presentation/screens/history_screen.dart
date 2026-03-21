@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:gchess_mobile/config/theme.dart';
-import 'package:gchess_mobile/features/history/data/repositories/history_remote_repository.dart';
 import 'package:gchess_mobile/features/history/domain/entities/game_record.dart';
 import 'package:gchess_mobile/features/history/presentation/providers/game_history_provider.dart';
 import 'package:gchess_mobile/features/history/presentation/screens/game_review_screen.dart';
@@ -16,6 +15,15 @@ class HistoryScreen extends ConsumerStatefulWidget {
 
 class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   bool _isLoadingGame = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Refresh history each time the screen is opened (in background)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(gameHistoryNotifierProvider.notifier).silentRefresh();
+    });
+  }
 
   Future<void> _onRecordTap(GameRecord partial) async {
     if (_isLoadingGame) return;
