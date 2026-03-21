@@ -18,6 +18,9 @@ class GameRecord {
   final DateTime playedAt;
   // From backend summary (used when sanHistory is not yet loaded)
   final int? rawMoveCount;
+  final int? whiteTimeRemainingMs;
+  final int? blackTimeRemainingMs;
+  final List<int?>? moveTimes;
 
   const GameRecord({
     required this.gameId,
@@ -36,6 +39,9 @@ class GameRecord {
     this.incrementSeconds,
     required this.playedAt,
     this.rawMoveCount,
+    this.whiteTimeRemainingMs,
+    this.blackTimeRemainingMs,
+    this.moveTimes,
   });
 
   bool get isPlayerWhite => whitePlayerId == playerId;
@@ -57,6 +63,9 @@ class GameRecord {
     int? totalTimeSeconds,
     int? incrementSeconds,
     required DateTime playedAt,
+    int? whiteTimeRemainingMs,
+    int? blackTimeRemainingMs,
+    List<int?>? moveTimes,
   }) {
     final chess = chess_lib.Chess();
     final sanList = <String>[];
@@ -102,6 +111,9 @@ class GameRecord {
       totalTimeSeconds: totalTimeSeconds,
       incrementSeconds: incrementSeconds,
       playedAt: playedAt,
+      whiteTimeRemainingMs: whiteTimeRemainingMs,
+      blackTimeRemainingMs: blackTimeRemainingMs,
+      moveTimes: moveTimes,
     );
   }
 
@@ -121,6 +133,9 @@ class GameRecord {
         'totalTimeSeconds': totalTimeSeconds,
         'incrementSeconds': incrementSeconds,
         'playedAt': playedAt.toIso8601String(),
+        'whiteTimeRemainingMs': whiteTimeRemainingMs,
+        'blackTimeRemainingMs': blackTimeRemainingMs,
+        'moveTimes': moveTimes,
       };
 
   factory GameRecord.fromJson(Map<String, dynamic> json) => GameRecord(
@@ -139,5 +154,8 @@ class GameRecord {
         totalTimeSeconds: json['totalTimeSeconds'] as int?,
         incrementSeconds: json['incrementSeconds'] as int?,
         playedAt: DateTime.parse(json['playedAt'] as String),
+        whiteTimeRemainingMs: json['whiteTimeRemainingMs'] as int?,
+        blackTimeRemainingMs: json['blackTimeRemainingMs'] as int?,
+        moveTimes: (json['moveTimes'] as List?)?.cast<int?>(),
       );
 }

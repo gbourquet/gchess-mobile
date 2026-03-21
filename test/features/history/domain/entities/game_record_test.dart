@@ -185,5 +185,86 @@ void main() {
       final restored = GameRecord.fromJson(drawRecord.toJson());
       expect(restored.winner, isNull);
     });
+
+    test('whiteTimeRemainingMs et blackTimeRemainingMs préservés après roundtrip', () {
+      final record = GameRecord.fromGame(
+        gameId: 'game-time',
+        playerId: playerId,
+        whiteUsername: 'Alice',
+        blackUsername: 'Bob',
+        whitePlayerId: whitePlayerId,
+        blackPlayerId: blackPlayerId,
+        result: 'CHECKMATE',
+        winner: whitePlayerId,
+        uciHistory: uciHistory,
+        finalFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        totalTimeSeconds: 300,
+        incrementSeconds: 0,
+        playedAt: DateTime.utc(2026, 3, 17),
+        whiteTimeRemainingMs: 45000,
+        blackTimeRemainingMs: 12300,
+      );
+
+      final restored = GameRecord.fromJson(record.toJson());
+      expect(restored.whiteTimeRemainingMs, 45000);
+      expect(restored.blackTimeRemainingMs, 12300);
+    });
+
+    test('moveTimes préservés après roundtrip', () {
+      final record = GameRecord.fromGame(
+        gameId: 'game-times',
+        playerId: playerId,
+        whiteUsername: 'Alice',
+        blackUsername: 'Bob',
+        whitePlayerId: whitePlayerId,
+        blackPlayerId: blackPlayerId,
+        result: 'DRAW',
+        winner: null,
+        uciHistory: uciHistory,
+        finalFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        playedAt: DateTime.utc(2026, 3, 17),
+        moveTimes: const [3500, 2100],
+      );
+
+      final restored = GameRecord.fromJson(record.toJson());
+      expect(restored.moveTimes, [3500, 2100]);
+    });
+  });
+
+  group('GameRecord.fromGame avec moveTimes', () {
+    test('moveTimes propagés', () {
+      final record = GameRecord.fromGame(
+        gameId: 'game-1',
+        playerId: playerId,
+        whiteUsername: 'Alice',
+        blackUsername: 'Bob',
+        whitePlayerId: whitePlayerId,
+        blackPlayerId: blackPlayerId,
+        result: 'DRAW',
+        winner: null,
+        uciHistory: uciHistory,
+        finalFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        playedAt: DateTime.utc(2026, 3, 17),
+        moveTimes: const [5000, 3000],
+      );
+      expect(record.moveTimes, [5000, 3000]);
+    });
+
+    test('moveTimes null par défaut', () {
+      final record = GameRecord.fromGame(
+        gameId: 'game-1',
+        playerId: playerId,
+        whiteUsername: 'Alice',
+        blackUsername: 'Bob',
+        whitePlayerId: whitePlayerId,
+        blackPlayerId: blackPlayerId,
+        result: 'DRAW',
+        winner: null,
+        uciHistory: const [],
+        finalFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        playedAt: DateTime.utc(2026, 3, 17),
+      );
+      expect(record.moveTimes, isNull);
+    });
   });
 }

@@ -49,5 +49,33 @@ void main() {
       expect(dto.toUci(), 'd5-e6');
       expect(dto.toUci().contains('null'), isFalse);
     });
+
+    test('fromJson parse timeSpentMs', () {
+      final json = {
+        'from': 'e2',
+        'to': 'e4',
+        'moveNumber': 1,
+        'timeSpentMs': 3500,
+      };
+      final dto = MoveSummaryDTO.fromJson(json);
+      expect(dto.timeSpentMs, 3500);
+    });
+
+    test('fromJson timeSpentMs null si absent', () {
+      final json = {'from': 'e2', 'to': 'e4', 'moveNumber': 1};
+      final dto = MoveSummaryDTO.fromJson(json);
+      expect(dto.timeSpentMs, isNull);
+    });
+
+    test('fromJson accepte timeSpentMs comme double (JSON number)', () {
+      final json = {
+        'from': 'e2',
+        'to': 'e4',
+        'moveNumber': 1,
+        'timeSpentMs': 1200.0,
+      };
+      final dto = MoveSummaryDTO.fromJson(json);
+      expect(dto.timeSpentMs, 1200);
+    });
   });
 }

@@ -28,4 +28,17 @@ class GameHistoryNotifier extends AsyncNotifier<List<GameRecord>> {
     state = const AsyncLoading();
     state = await AsyncValue.guard(build);
   }
+
+  /// Refresh without showing loading indicator (keeps current data visible).
+  Future<void> silentRefresh() async {
+    final user = ref.read(authNotifierProvider).value;
+    if (user == null) return;
+    try {
+      final records =
+          await ref.read(historyRemoteRepositoryProvider).fetchGames(user);
+      state = AsyncData(records);
+    } catch (_) {
+      // Keep existing data on error
+    }
+  }
 }

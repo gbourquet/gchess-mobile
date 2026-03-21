@@ -4,13 +4,17 @@ import 'package:gchess_mobile/config/theme.dart';
 
 class MoveHistoryPanel extends StatefulWidget {
   final List<String> sanHistory;
-  final int reviewIndex; // -1 = live (at latest move)
+  final int reviewIndex; // live game: -1=live ; review: -1=initial position
   final Function(int index) onMoveSelected;
   final VoidCallback onFirst;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onLast;
   final VoidCallback onReturnToLive;
+  // Optional: time spent per move in ms (null = not available)
+  final List<int?>? moveTimes;
+  // false in review mode: -1 means "initial position", no LIVE concept
+  final bool isGameMode;
 
   const MoveHistoryPanel({
     super.key,
@@ -22,6 +26,8 @@ class MoveHistoryPanel extends StatefulWidget {
     required this.onNext,
     required this.onLast,
     required this.onReturnToLive,
+    this.moveTimes,
+    this.isGameMode = true,
   });
 
   @override
@@ -31,10 +37,14 @@ class MoveHistoryPanel extends StatefulWidget {
 class _MoveHistoryPanelState extends State<MoveHistoryPanel> {
   final ScrollController _scrollController = ScrollController();
 
-  bool get _isLive => widget.reviewIndex == -1;
+  // In game mode: -1 = live (latest move highlighted)
+  // In review mode: -1 = initial position (no move highlighted)
+  bool get _isLive => widget.isGameMode && widget.reviewIndex == -1;
 
-  int get _activeIndex =>
-      _isLive ? widget.sanHistory.length - 1 : widget.reviewIndex;
+  int get _activeIndex {
+    if (_isLive) return widget.sanHistory.length - 1;
+    return widget.reviewIndex; // -1 means no active move in review mode
+  }
 
   @override
   void didUpdateWidget(MoveHistoryPanel oldWidget) {
@@ -129,6 +139,14 @@ class _MoveHistoryPanelState extends State<MoveHistoryPanel> {
         isBlackActive: hasBlack && _activeIndex == bi,
         onWhiteTap: () => widget.onMoveSelected(wi),
         onBlackTap: hasBlack ? () => widget.onMoveSelected(bi) : null,
+        whiteTimeMs: widget.moveTimes != null && wi < widget.moveTimes!.length
+            ? widget.moveTimes![wi]
+            : null,
+        blackTimeMs: hasBlack &&
+                widget.moveTimes != null &&
+                bi < widget.moveTimes!.length
+            ? widget.moveTimes![bi]
+            : null,
       ));
     }
     return items;
@@ -144,44 +162,55 @@ class _MoveHistoryPanelState extends State<MoveHistoryPanel> {
           const Spacer(),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
-            child: _isLive
-                ? Text(
-                    key: const ValueKey('live-text'),
-                    total == 0 ? '—' : 'Coup $total',
+            child: widget.isGameMode
+                ? (_isLive
+                    ? Text(
+                        key: const ValueKey('live-text'),
+                        total == 0 ? '—' : 'Coup $total',
+                        style: GoogleFonts.fredoka(
+                          color: AppColors.labelMuted,
+                          fontSize: 11,
+                        ),
+                      )
+                    : GestureDetector(
+                        key: const ValueKey('live-btn'),
+                        onTap: widget.onReturnToLive,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.neonCyan.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: AppColors.neonCyan.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _PulsingDot(),
+                              const SizedBox(width: 5),
+                              Text(
+                                'Coup ${widget.reviewIndex + 1} · LIVE',
+                                style: GoogleFonts.fredoka(
+                                  color: AppColors.neonCyan,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ))
+                : Text(
+                    key: ValueKey('review-pos-${widget.reviewIndex}'),
+                    widget.reviewIndex < 0
+                        ? 'Départ'
+                        : 'Coup ${widget.reviewIndex + 1}',
                     style: GoogleFonts.fredoka(
                       color: AppColors.labelMuted,
                       fontSize: 11,
-                    ),
-                  )
-                : GestureDetector(
-                    key: const ValueKey('live-btn'),
-                    onTap: widget.onReturnToLive,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.neonCyan.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: AppColors.neonCyan.withValues(alpha: 0.5),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _PulsingDot(),
-                          const SizedBox(width: 5),
-                          Text(
-                            'Coup ${widget.reviewIndex + 1} · LIVE',
-                            style: GoogleFonts.fredoka(
-                              color: AppColors.neonCyan,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                   ),
           ),
@@ -202,6 +231,8 @@ class _MovePair extends StatelessWidget {
   final bool isBlackActive;
   final VoidCallback onWhiteTap;
   final VoidCallback? onBlackTap;
+  final int? whiteTimeMs;
+  final int? blackTimeMs;
 
   const _MovePair({
     required this.moveNumber,
@@ -211,9 +242,12 @@ class _MovePair extends StatelessWidget {
     required this.isBlackActive,
     required this.onWhiteTap,
     this.onBlackTap,
+    this.whiteTimeMs,
+    this.blackTimeMs,
   });
 
-  Widget _moveChip(String san, bool isActive, VoidCallback onTap) {
+  Widget _moveChip(
+      String san, bool isActive, VoidCallback onTap, int? timeMs) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -229,16 +263,40 @@ class _MovePair extends StatelessWidget {
                   color: AppColors.neonCyan.withValues(alpha: 0.6), width: 1)
               : null,
         ),
-        child: Text(
-          san,
-          style: GoogleFonts.fredoka(
-            color: isActive ? AppColors.neonCyan : AppColors.labelWhite,
-            fontSize: 12,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              san,
+              style: GoogleFonts.fredoka(
+                color: isActive ? AppColors.neonCyan : AppColors.labelWhite,
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            if (isActive && timeMs != null)
+              Text(
+                _formatTimeMs(timeMs),
+                style: GoogleFonts.fredoka(
+                  color: AppColors.neonCyan.withValues(alpha: 0.7),
+                  fontSize: 9,
+                ),
+              ),
+          ],
         ),
       ),
     );
+  }
+
+  String _formatTimeMs(int ms) {
+    if (ms >= 60000) {
+      final m = ms ~/ 60000;
+      final s = (ms % 60000) ~/ 1000;
+      return '${m}m${s.toString().padLeft(2, '0')}s';
+    }
+    final s = ms ~/ 1000;
+    final tenths = (ms % 1000) ~/ 100;
+    return '$s.${tenths}s';
   }
 
   @override
@@ -256,7 +314,7 @@ class _MovePair extends StatelessWidget {
                 fontSize: 11,
               ),
             ),
-            _moveChip(whiteSan, isWhiteActive, onWhiteTap),
+            _moveChip(whiteSan, isWhiteActive, onWhiteTap, whiteTimeMs),
             if (blackSan != null) ...[
               Text(
                 ' ',
@@ -264,7 +322,7 @@ class _MovePair extends StatelessWidget {
                     color: AppColors.labelMuted.withValues(alpha: 0.5),
                     fontSize: 11),
               ),
-              _moveChip(blackSan!, isBlackActive, onBlackTap!),
+              _moveChip(blackSan!, isBlackActive, onBlackTap!, blackTimeMs),
             ],
           ],
         ),
