@@ -24,7 +24,17 @@ void main() {
   late AuthRepositoryImpl repository;
 
   const tUser = UserModel(id: '1', username: 'test', email: 'test@test.com');
-  const tLoginResponse = LoginResponse(token: 'token123', user: tUser);
+  // JWT valide avec exp = 4070908800 (année 2099)
+  const tValidToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+      '.eyJzdWIiOiIxIiwiZXhwIjo0MDcwOTA4ODAwfQ'
+      '.test';
+  // JWT expiré avec exp = 1577836800 (01/01/2020)
+  const tExpiredToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'
+      '.eyJzdWIiOiIxIiwiZXhwIjoxNTc3ODM2ODAwfQ'
+      '.test';
+  const tLoginResponse = LoginResponse(token: tValidToken, user: tUser);
   const tUsername = 'testuser';
   const tPassword = 'password123';
   const tEmail = 'test@test.com';
@@ -407,10 +417,10 @@ void main() {
       verifyNoMoreInteractions(mockLocalDataSource);
     });
 
-    test('should return Right(User) when token is present', () async {
+    test('should return Right(User) when token is valid (not expired)', () async {
       when(
         () => mockLocalDataSource.getToken(),
-      ).thenAnswer((_) async => 'token123');
+      ).thenAnswer((_) async => tValidToken);
       when(() => mockLocalDataSource.getUser()).thenAnswer((_) async => tUser);
 
       final result = await repository.getCurrentUser();
@@ -437,6 +447,170 @@ void main() {
         );
         verify(() => mockLocalDataSource.getToken());
         verifyNoMoreInteractions(mockLocalDataSource);
+      },
+    );
+
+    test(
+      'should return Right(null) and delete token when token is expired and no credentials stored',
+      () async {
+        when(
+          () => mockLocalDataSource.getToken(),
+        ).thenAnswer((_) async => tExpiredToken);
+        when(
+          () => mockLocalDataSource.getUsername(),
+        ).thenAnswer((_) async => null);
+        when(
+          () => mockLocalDataSource.getPassword(),
+        ).thenAnswer((_) async => null);
+        when(
+          () => mockLocalDataSource.deleteToken(),
+        ).thenAnswer((_) async => {});
+
+        final result = await repository.getCurrentUser();
+
+        expect(result, isA<Right<Failure, User?>>());
+        result.fold(
+          (_) => fail('Should have returned Right'),
+          (r) => expect(r, isNull),
+        );
+        verify(() => mockLocalDataSource.getToken());
+        verify(() => mockLocalDataSource.getUsername());
+        verify(() => mockLocalDataSource.getPassword());
+        verify(() => mockLocalDataSource.deleteToken());
+        verifyNoMoreInteractions(mockLocalDataSource);
+        verifyNoMoreInteractions(mockRemoteDataSource);
+      },
+    );
+
+    test(
+      'should re-login and return Right(User) when token is expired and credentials available',
+      () async {
+        when(
+          () => mockLocalDataSource.getToken(),
+        ).thenAnswer((_) async => tExpiredToken);
+        when(
+          () => mockLocalDataSource.getUsername(),
+        ).thenAnswer((_) async => tUsername);
+        when(
+          () => mockLocalDataSource.getPassword(),
+        ).thenAnswer((_) async => tPassword);
+        when(
+          () => mockNetworkInfo.isConnected,
+        ).thenAnswer((_) async => true);
+        when(
+          () => mockRemoteDataSource.login(
+            username: any(named: 'username'),
+            password: any(named: 'password'),
+          ),
+        ).thenAnswer((_) async => tLoginResponse);
+        when(
+          () => mockLocalDataSource.saveToken(any()),
+        ).thenAnswer((_) async => {});
+        when(
+          () => mockLocalDataSource.saveUser(any()),
+        ).thenAnswer((_) async => {});
+
+        final result = await repository.getCurrentUser();
+
+        expect(result, const Right(tUser));
+        verify(() => mockLocalDataSource.getToken());
+        verify(() => mockLocalDataSource.getUsername());
+        verify(() => mockLocalDataSource.getPassword());
+        verify(() => mockNetworkInfo.isConnected);
+        verify(
+          () => mockRemoteDataSource.login(
+            username: tUsername,
+            password: tPassword,
+          ),
+        );
+        verify(() => mockLocalDataSource.saveToken(tValidToken));
+        verify(() => mockLocalDataSource.saveUser(tUser));
+        verifyNoMoreInteractions(mockRemoteDataSource);
+        verifyNoMoreInteractions(mockLocalDataSource);
+      },
+    );
+
+    test(
+      'should return Right(null) and clear credentials when token is expired and re-login fails',
+      () async {
+        when(
+          () => mockLocalDataSource.getToken(),
+        ).thenAnswer((_) async => tExpiredToken);
+        when(
+          () => mockLocalDataSource.getUsername(),
+        ).thenAnswer((_) async => tUsername);
+        when(
+          () => mockLocalDataSource.getPassword(),
+        ).thenAnswer((_) async => tPassword);
+        when(
+          () => mockNetworkInfo.isConnected,
+        ).thenAnswer((_) async => true);
+        when(
+          () => mockRemoteDataSource.login(
+            username: any(named: 'username'),
+            password: any(named: 'password'),
+          ),
+        ).thenThrow(AuthenticationException('Invalid credentials'));
+        when(
+          () => mockLocalDataSource.deleteToken(),
+        ).thenAnswer((_) async => {});
+        when(
+          () => mockLocalDataSource.deleteCredentials(),
+        ).thenAnswer((_) async => {});
+
+        final result = await repository.getCurrentUser();
+
+        expect(result, isA<Right<Failure, User?>>());
+        result.fold(
+          (_) => fail('Should have returned Right'),
+          (r) => expect(r, isNull),
+        );
+        verify(() => mockLocalDataSource.getToken());
+        verify(() => mockLocalDataSource.getUsername());
+        verify(() => mockLocalDataSource.getPassword());
+        verify(() => mockNetworkInfo.isConnected);
+        verify(
+          () => mockRemoteDataSource.login(
+            username: tUsername,
+            password: tPassword,
+          ),
+        );
+        verify(() => mockLocalDataSource.deleteToken());
+        verify(() => mockLocalDataSource.deleteCredentials());
+        verifyNoMoreInteractions(mockRemoteDataSource);
+        verifyNoMoreInteractions(mockLocalDataSource);
+      },
+    );
+
+    test(
+      'should return cached user when token is expired but no network connection',
+      () async {
+        when(
+          () => mockLocalDataSource.getToken(),
+        ).thenAnswer((_) async => tExpiredToken);
+        when(
+          () => mockLocalDataSource.getUsername(),
+        ).thenAnswer((_) async => tUsername);
+        when(
+          () => mockLocalDataSource.getPassword(),
+        ).thenAnswer((_) async => tPassword);
+        when(
+          () => mockNetworkInfo.isConnected,
+        ).thenAnswer((_) async => false);
+        when(
+          () => mockLocalDataSource.getUser(),
+        ).thenAnswer((_) async => tUser);
+
+        final result = await repository.getCurrentUser();
+
+        expect(result, const Right(tUser));
+        verify(() => mockLocalDataSource.getToken());
+        verify(() => mockLocalDataSource.getUsername());
+        verify(() => mockLocalDataSource.getPassword());
+        verify(() => mockNetworkInfo.isConnected);
+        verify(() => mockLocalDataSource.getUser());
+        verifyNoMoreInteractions(mockLocalDataSource);
+        verifyNoMoreInteractions(mockRemoteDataSource);
       },
     );
   });
