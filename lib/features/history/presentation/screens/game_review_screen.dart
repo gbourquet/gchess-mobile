@@ -113,6 +113,15 @@ class _GameReviewScreenState extends State<GameReviewScreen> {
     return null;
   }
 
+  bool get _isAtEnd => _reviewIndex >= _record.fenHistory.length - 1;
+
+  String? _winnerColorLabel() {
+    if (_record.winner == null) return null;
+    if (_record.winner == _record.whitePlayerId) return 'Blancs';
+    if (_record.winner == _record.blackPlayerId) return 'Noires';
+    return null;
+  }
+
   void _navigateTo(int index) {
     if (index < -1 || index >= _record.fenHistory.length) return;
     setState(() => _reviewIndex = index);
@@ -226,17 +235,23 @@ class _GameReviewScreenState extends State<GameReviewScreen> {
                   ),
                 Expanded(
                   child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      child: ChessBoard(
-                        chess: _chess,
-                        positionFen: _currentFen,
-                        isPlayerWhite: _record.isPlayerWhite,
-                        onMove: null,
-                        lastMoveFrom: _lastMoveFrom,
-                        lastMoveTo: _lastMoveTo,
-                      ),
+                    child: Stack(
+                      alignment: Alignment.bottomCenter,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          child: ChessBoard(
+                            chess: _chess,
+                            positionFen: _currentFen,
+                            isPlayerWhite: _record.isPlayerWhite,
+                            onMove: null,
+                            lastMoveFrom: _lastMoveFrom,
+                            lastMoveTo: _lastMoveTo,
+                          ),
+                        ),
+                        if (_isAtEnd) _buildResultOverlay(),
+                      ],
                     ),
                   ),
                 ),
@@ -265,6 +280,70 @@ class _GameReviewScreenState extends State<GameReviewScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildResultOverlay() {
+    final winnerLabel = _winnerColorLabel();
+    final Color accentColor = winnerLabel != null
+        ? AppColors.neonGold
+        : AppColors.neonCyan;
+
+    final String mainLine = winnerLabel != null
+        ? '$winnerLabel gagnent · ${_winnerUsername()}'
+        : 'Partie nulle';
+    final String subLine = _resultLabel();
+
+    return Positioned(
+      bottom: 8,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.bgDeep.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: accentColor.withValues(alpha: 0.6)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              winnerLabel != null ? Icons.emoji_events : Icons.handshake,
+              color: accentColor,
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  mainLine,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: accentColor,
+                  ),
+                ),
+                Text(
+                  subLine,
+                  style: GoogleFonts.fredoka(
+                    fontSize: 12,
+                    color: AppColors.labelMuted,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _winnerUsername() {
+    if (_record.winner == null) return '';
+    if (_record.winner == _record.whitePlayerId) return _record.whiteUsername;
+    if (_record.winner == _record.blackPlayerId) return _record.blackUsername;
+    return '';
   }
 
   Widget _buildHeader(BuildContext context) {
