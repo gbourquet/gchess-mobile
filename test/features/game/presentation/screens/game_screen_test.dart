@@ -40,6 +40,7 @@ ChessGame _game({
   List<String> moves = const [],
   int? whiteMs,
   int? blackMs,
+  String? winner,
 }) =>
     ChessGame(
       gameId: 'g-1',
@@ -52,6 +53,7 @@ ChessGame _game({
       blackPlayer: _kBlackPlayer,
       whiteTimeRemainingMs: whiteMs,
       blackTimeRemainingMs: blackMs,
+      winner: winner,
     );
 
 // Notifier fake permettant d'émettre de nouveaux états depuis les tests
@@ -307,13 +309,28 @@ void main() {
         expect(find.text('Pat'), findsOneWidget);
       });
 
-      testWidgets('RESIGNED — affiche "Abandon"', (tester) async {
-        final game = _game(status: GameStatus.resigned);
+      testWidgets('RESIGNED — joueur a abandonné affiche "Abandon"',
+          (tester) async {
+        // Le joueur (blanc) a abandonné → winner = joueur noir
+        final game = _game(
+            status: GameStatus.resigned, winner: _kBlackPlayerId);
         final state = GameEnded(game: game, result: 'RESIGNED');
-        await tester.pumpWidget(_buildScreen(state));
+        await tester.pumpWidget(_buildScreen(state)); // playerId = blanc
         await tester.pump();
         tester.takeException();
         expect(find.text('Abandon'), findsOneWidget);
+      });
+
+      testWidgets('RESIGNED — adversaire a abandonné affiche "Victoire !"',
+          (tester) async {
+        // L'adversaire (noir) a abandonné → winner = joueur blanc
+        final game = _game(
+            status: GameStatus.resigned, winner: _kWhitePlayerId);
+        final state = GameEnded(game: game, result: 'RESIGNED');
+        await tester.pumpWidget(_buildScreen(state)); // playerId = blanc
+        await tester.pump();
+        tester.takeException();
+        expect(find.text('Victoire !'), findsOneWidget);
       });
 
       testWidgets('TIMEOUT — affiche "Temps écoulé"', (tester) async {

@@ -763,10 +763,14 @@ class _GameViewState extends ConsumerState<GameView>
       resultIcon = Icons.handshake;
       resultColor = AppColors.neonCyan;
     } else if (result.contains('RESIGNED')) {
-      resultTitle = 'Abandon';
-      resultDescription = 'Un joueur a abandonné.';
-      resultIcon = Icons.flag;
-      resultColor = Colors.orange;
+      final userWon = state.game.winner != null &&
+          state.game.winner == widget.playerId;
+      resultTitle = userWon ? 'Victoire !' : 'Abandon';
+      resultDescription = userWon
+          ? 'Votre adversaire a abandonné la partie.'
+          : 'Vous avez abandonné la partie.';
+      resultIcon = userWon ? Icons.emoji_events : Icons.flag;
+      resultColor = userWon ? AppColors.neonGold : AppColors.clockDigitOpponent;
     } else if (result.contains('TIMEOUT')) {
       resultTitle = 'Temps écoulé';
       resultDescription = _getTimeoutDescription(state.game, widget.playerId);
