@@ -126,7 +126,7 @@ Les identifiants sont au format ULID (UserId, PlayerId, GameId, BotId).
 | Environnement | URL |
 |---|---|
 | Développement | `http://10.0.2.2:8080` (émulateur Android) / `http://localhost:8080` (iOS) |
-| Production | `https://shimmering-spirit-production.up.railway.app` |
+| Production | votre domaine, défini dans `lib/config/app_config.dart` |
 
 L'environnement est sélectionnable via l'overlay de debug (triple tap + double tap simultané en mode debug).
 
