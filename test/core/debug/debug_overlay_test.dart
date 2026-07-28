@@ -45,7 +45,7 @@ void main() {
     test('setEnvironment production configure les bonnes URLs', () {
       AppConfig.setEnvironment(Environment.production);
       expect(AppConfig.environment, Environment.production);
-      expect(AppConfig.baseUrl, contains('railway'));
+      expect(AppConfig.baseUrl, contains('gchess.sur-le-web.fr'));
       // Remettre en dev après le test
       AppConfig.setEnvironment(Environment.development);
     });

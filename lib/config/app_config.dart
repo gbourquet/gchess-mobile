@@ -17,7 +17,7 @@ class AppConfig {
       case Environment.development:
         return 'http://10.0.2.2:8080';
       case Environment.production:
-        return 'https://shimmering-spirit-production.up.railway.app';
+        return 'https://gchess.sur-le-web.fr';
     }
   }
 
@@ -26,7 +26,7 @@ class AppConfig {
       case Environment.development:
         return 'ws://10.0.2.2:8080';
       case Environment.production:
-        return 'wss://shimmering-spirit-production.up.railway.app';
+        return 'wss://gchess.sur-le-web.fr';
     }
   }
 

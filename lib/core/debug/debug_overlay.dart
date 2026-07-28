@@ -227,8 +227,8 @@ class _DebugMenuOverlayState extends State<_DebugMenuOverlay>
                     ),
                     const SizedBox(height: 10),
                     _EnvTile(
-                      label: 'Dev (Railway)',
-                      subtitle: 'shimmering-spirit-production.up.railway.app',
+                      label: 'Production',
+                      subtitle: 'gchess.sur-le-web.fr',
                       env: Environment.production,
                       selected: _selected,
                       onTap: () => _applyEnv(Environment.production),
