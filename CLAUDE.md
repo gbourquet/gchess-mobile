@@ -5,7 +5,10 @@ Ce fichier fournit des instructions à Claude Code pour ce dépôt.
 ## Vue d'ensemble du projet
 
 Application mobile Flutter **gChess** pour jouer aux échecs en ligne.
-Backend Kotlin dans `../gChess` — specs REST dans `../gChess/src/main/resources/openapi/openapi.json`.
+Backend Kotlin dans `../gChess-back` — specs REST dans `../gChess-back/src/main/resources/openapi/openapi.json`, protocole WebSocket dans `../gChess-back/src/main/resources/asyncapi/asyncapi.yaml`.
+
+- **Vocabulaire** : [`CONTEXT.md`](CONTEXT.md) renvoie au glossaire du back (Player vs User, Side, Outcome, Timeout…) et à celui du front (Lobby, Preset, Speed, Premove, History, Result…). Utiliser ces termes dans le code, les tests et les tickets.
+- **Décisions** : [`docs/adr/`](docs/adr/) pour le mobile ; les décisions transverses (horloge côté serveur, PlayerId…) sont dans `../gChess-back/docs/adr/`.
 
 ## Stack
 
@@ -13,10 +16,10 @@ Backend Kotlin dans `../gChess` — specs REST dans `../gChess/src/main/resource
 - **Navigation** : GoRouter v17
 - **HTTP** : Dio + intercepteur JWT automatique (`ApiClient`)
 - **WebSocket** : `web_socket_channel`
-- **Logique échecs** : `chess ^0.8.1`
-- **DI** : GetIt + Injectable
+- **Logique échecs** : `chess ^0.8.1` (coups légaux, pré-coups, SAN) — appelé à disparaître au profit des données envoyées par le serveur (GCH-8)
+- **DI** : GetIt + Injectable pour data/domain, Riverpod pour la présentation. Ce doublon n'est pas voulu : la cible est Riverpod partout (GCH-12), ne pas ajouter de nouvel enregistrement GetIt.
 - **Either** : `dartz`
-- **Tests** : `mocktail`, pas de `bloc_test` (plus de BLoC)
+- **Tests** : `mocktail`, pas de `bloc_test` (plus de BLoC ; les dossiers `presentation/bloc/` contiennent des états Riverpod et seront renommés, GCH-12)
 
 ## Architecture
 
@@ -112,12 +115,18 @@ asyncData.when(
 | `/ws/matchmaking` | File d'attente et matching |
 | `/ws/game/{gameId}` | Gameplay temps réel |
 
+Pas encore de mode spectateur (`/ws/game/{gameId}/spectate`, GCH-11).
+
+Le serveur fait seul autorité sur les horloges (ADR-0004 du back) : le décompte local ne sert qu'à l'affichage, et seul le joueur qui attend peut réclamer le Timeout (`ClaimTimeout`). Le client envoie aussi un claim quand sa propre horloge tombe à 0, ce que le serveur refuse (GCH-10).
+
+Statuts envoyés par le serveur : `IN_PROGRESS`, `CHECKMATE`, `STALEMATE`, `DRAW`, `RESIGNED`, `TIMEOUT`. L'enum Dart dit `active` / `ACTIVE` et ne marche que grâce au fallback de `fromString` (GCH-10).
+
 ## Conventions
 
 - **Langue** : code en anglais, commentaires et messages utilisateur en français
 - **Nommage providers** : `fooNotifierProvider` + `FooNotifier`
-- **Identifiants** : format ULID (UserId permanent ≠ PlayerId par partie)
-- **Winner CHECKMATE** : le camp à jouer dans la position finale est le perdant (`chess.turn == Color.BLACK` → blanc gagne)
+- **Identifiants** : format ULID (UserId permanent ≠ PlayerId par partie). Attention : dans `GameRecord`, les champs `playerId` / `whitePlayerId` / `blackPlayerId` contiennent en réalité des UserId (GCH-10).
+- **Winner CHECKMATE** : le camp à jouer dans la position finale est le perdant (`chess.turn == Color.BLACK` → blanc gagne). Déduction côté client provisoire : le serveur devrait envoyer `winnerSide` (GCH-10)
 - **Pas de `print()`** dans le code final (les `print` de debug dans `game_provider.dart` sont intentionnels pour le diagnostic)
 - **Couverture cible** : ≥ 80 % (actuellement 87,4 %)
 
